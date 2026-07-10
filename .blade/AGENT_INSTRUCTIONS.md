@@ -232,12 +232,14 @@ The standard below is derived from the Lumen SRE app security baseline (establis
 - [ ] Ownership is enforced for every read/update/delete on user-scoped data (explicit 404 before delete/update, not just relying on composite key matching).
 - [ ] `SKIP_AUTH=true` is blocked in Lambda (env var `AWS_LAMBDA_FUNCTION_NAME` set → skip auth never takes effect).
 - [ ] Role/claims extraction is validated before granting access.
+- [ ] Frontend enforces auth at the router level — all routes except the MSAL callback redirect require a valid session; no client-side route is accessible without authentication.
 
 **Secrets and configuration**
 - [ ] No secrets, tenant IDs, account IDs, or API keys are hardcoded in source code or committed to the repo.
 - [ ] `.env.example` contains only placeholder strings — no real values.
 - [ ] Runtime secrets come from AWS Secrets Manager, not environment variables baked into the Lambda package.
 - [ ] `VITE_*` env vars are build-time and client-visible — confirm none contain sensitive values.
+- [ ] Secrets Manager IAM grants are scoped to a specific ARN prefix (e.g., `arn:aws:secretsmanager:*:*:secret:my-app/*`) — not wildcard `*` on all secrets.
 
 **Input validation**
 - [ ] Every POST/PUT endpoint validates the request body with a schema (express-validator for Node; Pydantic for Python).
@@ -257,10 +259,12 @@ The standard below is derived from the Lumen SRE app security baseline (establis
 - [ ] Credentials, tokens, authorization headers, and raw PII are never logged.
 - [ ] User-provided free text is sanitized before logging (prevent log injection).
 - [ ] Unhandled exceptions return a generic `500` to the client; the full stack trace is logged server-side only.
+- [ ] CloudWatch log group has a retention policy set (recommended: 90 days) — do not leave retention as "Never expire".
 
 **Infrastructure and CI/CD**
 - [ ] GitHub Actions uses OIDC role assumption — no long-lived static AWS credentials stored as secrets.
 - [ ] IAM roles follow least-privilege: only the specific actions and resource ARNs needed are granted.
+- [ ] Lambda function is deployed into a private VPC subnet and is not directly internet-accessible — all inbound traffic must flow through the ALB.
 - [ ] Dependabot is configured (`.github/dependabot.yml`) with weekly updates for all package ecosystems used.
 - [ ] `npm audit --audit-level=high --omit=dev` (or `pip-audit`) runs in CI and blocks on high/critical findings.
 - [ ] WAF is enabled in Terraform for any public-facing app or app handling sensitive data.
@@ -269,6 +273,28 @@ The standard below is derived from the Lumen SRE app security baseline (establis
 - [ ] All external calls (AWS services, third-party APIs) have explicit timeouts.
 - [ ] Retry/backoff logic distinguishes retryable (502/503/429) from non-retryable (400/401/403) failures.
 - [ ] The `/health` endpoint checks dependencies and returns `degraded` status without exposing internal error details.
+- [ ] Graceful degradation is implemented where possible — a failing non-critical dependency should degrade, not crash the app.
+
+**AI / Bedrock (if applicable)**
+- [ ] All Bedrock invocations include a mandatory guardrail ARN — enforced at the IAM level via a `Condition` block on `bedrock:InvokeModel`, not just in application code.
+- [ ] LLM input and output is written to an audit table (DynamoDB or equivalent) for compliance and auditability.
+- [ ] LLM output is validated before use — do not pass raw model output into business logic without format/content checks.
+
+**Data lifecycle and retention**
+- [ ] Retention behavior is defined for all stored data (user records, logs, AI audit entries) — "keep forever" is not an acceptable default.
+- [ ] Delete and archive operations are auditable — log who deleted what and when.
+- [ ] Legal hold / retention constraints are respected if the app handles data subject to compliance requirements.
+
+### Done criteria for security-relevant changes
+
+Before marking any PR complete that touches authentication, authorization, secrets, logging, or data storage, confirm:
+
+- [ ] AuthN/AuthZ behavior validated for every changed endpoint or page
+- [ ] Secrets handling and config exposure reviewed — nothing new hardcoded or client-exposed
+- [ ] Logging is structured, correlated, and redacted — no new credentials or PII in logs
+- [ ] Input validation and sanitization verified for all new inputs
+- [ ] Resilience behavior validated for any new external calls
+- [ ] Tests added or updated for both happy path and failure/error cases
 
 ### Reporting
 
@@ -289,10 +315,10 @@ When asked to evaluate code quality, or before any major release, score the app 
 |----------|--------|-----------------|
 | **Architecture** | 15% | Separation of concerns, hook/service extraction, no monolithic files, correlation middleware |
 | **Code quality** | 15% | No dead code, no commented-out blocks, no unexplained `any`, singletons for expensive clients, no cross-module private imports |
-| **Testing** | 20% | Unit tests for all service/util modules with mocked externals; frontend component/hook tests; ≥80% coverage on business logic |
+| **Testing** | 20% | Unit tests for all service/util modules with mocked externals; frontend component and hook tests (Vitest); E2E tests for critical user flows (Playwright); contract tests for external API integrations; ≥80% coverage on business logic. All four test types should be present in a mature app. |
 | **Security** | 15% | All items in the security checklist above pass |
-| **Performance** | 10% | No synchronous calls in async contexts, module-level singletons, no per-request client construction |
-| **Dependencies** | 5% | Dependabot enabled, no known high/critical CVEs in production deps, type-only packages in devDependencies |
+| **Performance** | 10% | No synchronous calls in async contexts, module-level singletons for expensive clients (HTTP, DB, LLM), no per-request client construction |
+| **Dependencies** | 5% | Dependabot enabled, no known high/critical CVEs in production deps, type-only packages in devDependencies, no deprecated framework APIs in use (Pydantic v1 patterns, React legacy lifecycle methods, etc.) |
 | **Documentation** | 10% | README accurate, ONBOARDING enables 30-min setup, SECURITY.md current, RELEASE.md has changelog |
 | **Error handling** | 10% | All exceptions logged with context, no silent swallowing, structured client-safe error responses |
 
