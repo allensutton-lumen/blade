@@ -20,6 +20,7 @@ This is a **real conversation**, not a formality. The following are BLADE recomm
 | **Data storage** | No DB by default — add what fits | DynamoDB for serverless/scalable key-value; SQLite for read-heavy dashboards with periodic ETL (mount on EFS for Lambda persistence — see SALEFA metrics dashboard pattern); PostgreSQL/RDS for complex relational queries; no DB if data lives entirely in external systems |
 | **Infrastructure** | Lambda + ALB + Terraform | ECS/Fargate for long-running processes; App Runner for simpler container deploys |
 | **WAF** | Optional (disabled by default) | Enable for public-facing apps or apps handling sensitive data |
+| **Cloud provider** | AWS | All BLADE Terraform targets AWS. If Azure or GCP is required, the Terraform modules will need to be adapted — note this as a deviation in TECHNICAL_DECISIONS.md. |
 | **CI/CD** | GitHub Actions + OIDC | Jenkins if org policy requires it |
 
 Questions to ask during the discussion:
