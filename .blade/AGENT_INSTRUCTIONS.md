@@ -14,7 +14,7 @@ This is a **real conversation**, not a formality. The following are BLADE recomm
 
 | Area | BLADE default | When to deviate |
 |------|--------------|-----------------|
-| **Frontend** | React 19 + Vite + TypeScript | Angular if team has deep Angular expertise; no frontend if pure API/CLI tool; plain HTML/JS for ultra-simple dashboards |
+| **Frontend** | React 19 + Vite + TypeScript | No frontend if pure API/CLI tool; plain HTML/JS for ultra-simple single-page dashboards with no auth requirement |
 | **Backend** | Node/Express + TypeScript | Python/FastAPI if heavy ML/data science; no backend if static + direct AWS calls |
 | **Auth** | Azure AD MSAL + JWKS | API key only for machine-to-machine; no auth for fully internal tools with network-level protection |
 | **Data storage** | No DB by default — add what fits | DynamoDB for serverless/scalable key-value; SQLite for read-heavy dashboards with periodic ETL (mount on EFS for Lambda persistence — see SALEFA metrics dashboard pattern); PostgreSQL/RDS for complex relational queries; no DB if data lives entirely in external systems |
