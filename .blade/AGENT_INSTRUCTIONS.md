@@ -4,6 +4,22 @@ BLADE (Blueprint for Lumen AI-Driven Engineering) is the standard template for L
 
 ---
 
+## At the start of every development session
+
+Before doing anything else, check the current git branch:
+
+```bash
+git branch --show-current
+```
+
+- If the branch is a **default or protected branch** (`main`, `master`, `dev`, `develop`) → ask the user what branch they want to work on, then create and switch to it. Do not write any code or make any commits until this is resolved.
+- If the branch is already a **feature/fix branch** → confirm the name with the user ("I see we're on `fix/some-thing` — continuing work here. Is that right?") and proceed once confirmed.
+- If the user has **no preference**, suggest a branch name based on the task description (e.g., `feat/add-export-button`, `fix/auth-timeout`, `chore/upgrade-dependencies`) and create it after confirmation.
+
+**Why this matters:** Commits made directly to `main` or `dev` bypass CI gates, skip code review, and can break deployments. A wrong branch is much harder to fix after the fact.
+
+---
+
 ## Before writing any code
 
 ### 1. Read `TECHNICAL_DECISIONS.md`
