@@ -1,0 +1,5 @@
+.app-header { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.5rem; background: var(--lumen-dark-blue); color: var(--lumen-white); border-bottom: 4px solid var(--lumen-cyan); }
+.app-header__brand, .app-header__actions { display: flex; align-items: center; gap: 1rem; }
+.app-header__logo { display: inline-grid; place-items: center; width: 2.75rem; height: 2.75rem; border-radius: 999px; background: rgba(255,255,255,0.12); color: var(--lumen-cyan); font-size: 1.25rem; }
+.app-header__eyebrow { font-size: 0.75rem; color: rgba(255,255,255,0.72); text-transform: uppercase; letter-spacing: 0.08em; }
+.app-header__user { color: rgba(255,255,255,0.9); }

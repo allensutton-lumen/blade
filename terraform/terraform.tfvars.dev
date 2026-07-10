@@ -1,0 +1,15 @@
+environment                 = "dev"
+project_name                = "blade"
+app_name                    = "BLADE"
+frontend_url                = "https://blade.dev.ld.lumen.com"
+custom_domain_name          = "blade.dev.ld.lumen.com"
+route53_zone_id             = "REPLACE_WITH_HOSTED_ZONE_ID"
+vpc_id                      = "vpc-REPLACE"
+private_subnet_ids          = ["subnet-REPLACE1", "subnet-REPLACE2"]
+routable_subnet_ids         = ["subnet-REPLACE1", "subnet-REPLACE2"]
+alb_listener_rule_priority  = 250
+secret_path_azure           = "blade/dev/azure-ad"
+authorized_users_group_id   = "00000000-0000-0000-0000-000000000000"
+authorized_admins_group_id  = "00000000-0000-0000-0000-000000000000"
+enable_waf                  = true
+additional_tags = { Owner = "Lumen" }
