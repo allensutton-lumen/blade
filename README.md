@@ -93,7 +93,29 @@ See `DEPLOYMENT.md` for first-time Terraform bootstrap steps.
 
 ---
 
-## BLADE's own decisions — and why
+## Compliance enforcement model
+
+BLADE uses two complementary layers:
+
+| Layer | What it enforces | When it runs |
+|-------|-----------------|--------------|
+| **Agent instructions** (`.blade/AGENT_INSTRUCTIONS.md`) | Architecture decisions, tech stack choices, code quality, security posture, QA standards | Every agent session — agent reads and follows these before writing code |
+| **CI/CD gates** (GitHub Actions) | Lint, tests, `npm audit`, TypeScript, no hardcoded secrets | Every PR — automated, cannot be bypassed without bypassing branch protection |
+
+A future direction (not yet implemented) is a **reusable BLADE compliance workflow** — a GitHub Actions workflow hosted in this repo that apps can reference directly:
+
+```yaml
+# In any BLADE app's .github/workflows/ci.yml
+jobs:
+  blade-check:
+    uses: LumenTech-Prod/blade/.github/workflows/blade-check.yml@main
+```
+
+This would let BLADE enforce structural compliance (required files, Dependabot config, audit thresholds) across all apps automatically, picking up improvements to the check whenever BLADE is updated — without re-cloning. Contributions welcome.
+
+---
+
+
 
 These choices were derived from an analysis of existing Lumen AI-developed applications — surveying what was working well across the portfolio and selecting the best-proven patterns for each area.
 
