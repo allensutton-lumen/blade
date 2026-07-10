@@ -161,11 +161,23 @@ Every decision made in the discussion goes into `TECHNICAL_DECISIONS.md` — inc
 - Every POST/PUT endpoint must use `express-validator` + `handleValidationErrors`.
 - Run `npm run lint && npm test` in both `frontend/` and `backend/` before every commit.
 - Run `npx tsc --noEmit` in both `frontend/` and `backend/` before merging.
-- Update `TECHNICAL_DECISIONS.md` when new architectural decisions are made — not just the initial ones.
-- Update `README.md` whenever setup or run steps change.
-- Update `RELEASE.md` with a changelog entry for every PR.
-- Keep `ONBOARDING.md` current — a new engineer should be able to set up the app in under 30 minutes using it alone.
 - Clean up dead code: no commented-out blocks, no unused imports, no unexplained `any`.
+
+### Keeping documentation current
+
+Documentation that is out of date is treated as a bug, not a nice-to-have. Update the relevant file **in the same commit as the code change** — not as a follow-up.
+
+| File | Update when... |
+|------|---------------|
+| `README.md` | Setup steps, run commands, architecture, env vars, or the deployment model change |
+| `ONBOARDING.md` | A new engineer would get stuck following the current version — add the missing step |
+| `DEPLOYMENT.md` | Any Terraform resource, deploy script, or environment configuration changes |
+| `SECURITY.md` | The auth model, secrets approach, CORS config, security headers, or IAM posture changes |
+| `TECHNICAL_DECISIONS.md` | Any architectural decision is made or revisited — write it **before** implementation begins, not after |
+| `RELEASE.md` | Every PR — add a one-line changelog entry under the current version heading |
+| `.blade/AGENT_INSTRUCTIONS.md` | Do **not** modify this directly in an app repo. Changes to the standard belong in `LumenTech-Prod/blade` and propagate to apps via the session-start refresh. |
+
+If a change affects multiple docs, update all of them. Partial doc updates are worse than none — they create contradictions.
 
 ---
 

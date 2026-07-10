@@ -4,7 +4,13 @@
 
 ## What is BLADE?
 
-BLADE is the standard starting point for Lumen internal apps built with AI agents (GitHub Copilot, etc.). It encodes the best practices observed across several production Lumen AI apps, provides a working skeleton you can deploy on day one, and includes agent instructions that guide the AI through a tech stack discussion before writing a single line of app-specific code.
+BLADE is the standard starting point for Lumen internal apps built with AI agents (GitHub Copilot CLI, Cursor, etc.). It encodes best practices observed across production Lumen AI apps and provides:
+
+- A working full-stack skeleton (React + Node/Express + Terraform) deployable on day one
+- A branching strategy, PR workflow, and CI/CD pipeline pre-wired
+- Agent instructions (`.blade/AGENT_INSTRUCTIONS.md`) that govern every development session — including a session-start ritual, branching enforcement, GitHub security alert checks, and honest-by-default agent behavior
+- A security evaluation checklist and QA scoring rubric derived from the Lumen SRE app baseline
+- Automatic BLADE standards refresh at the start of every session, so apps stay current without re-cloning
 
 BLADE currently targets **AWS**. Azure and GCP Terraform support can be added as contributions.
 
@@ -15,9 +21,41 @@ BLADE currently targets **AWS**. Azure and GCP Terraform support can be added as
 ```powershell
 git clone https://github.com/LumenTech-Prod/blade.git my-app
 cd my-app
-# Read .blade/AGENT_INSTRUCTIONS.md before doing anything else
-# Then start a tech stack discussion with your AI agent
 ```
+
+Open a new agent session (GitHub Copilot CLI, Cursor, etc.) from the `my-app` directory. The agent will:
+
+1. Pull the latest BLADE standards from the central repo
+2. Check the current git branch and create a feature branch if needed
+3. Check GitHub for open security alerts
+4. Read `TECHNICAL_DECISIONS.md` and conduct a tech stack discussion before writing any code
+
+> Do not start writing app code before the tech stack discussion is complete. The agent instructions enforce this.
+
+---
+
+## The `.blade/` directory
+
+| File | Purpose |
+|------|---------|
+| `AGENT_INSTRUCTIONS.md` | The core of BLADE. Governs agent behavior, branching strategy, session-start ritual, security evaluation, and QA standards. Refreshed automatically at each session start. |
+| `UPGRADE_GUIDE.md` | Checklist for bringing an existing non-BLADE app up to the standard, plus an agent prompt template for starting an upgrade session. |
+
+---
+
+## Branching strategy
+
+```
+feat/* / fix/* / chore/*
+        ↓  PR + CI
+       dev          ← all feature work lands here first
+        ↓  PR + CI
+      prod          ← pre-production; staged for release
+        ↓  PR + CI
+      main          ← production-stable only
+```
+
+Never commit directly to `dev`, `prod`, or `main`. The agent enforces this at session start.
 
 ---
 
@@ -38,13 +76,12 @@ AWS
 
 For each new app:
 
-1. Read `.blade/AGENT_INSTRUCTIONS.md` and run the tech stack discussion
-2. Fill in `TECHNICAL_DECISIONS.md` with decisions made
-3. Update `APP_NAME` and `project_name` in `terraform/terraform.tfvars.*`
-4. Add app-specific routes in `backend/src/app.ts`
-5. Add app-specific content in `frontend/src/App.tsx`
-6. Update Azure AD group IDs and secret paths in `.env.example`
-7. Bootstrap Terraform — see `DEPLOYMENT.md`
+1. Start an agent session — it will conduct the tech stack discussion and fill in `TECHNICAL_DECISIONS.md`
+2. Update `APP_NAME` and `project_name` in `terraform/terraform.tfvars.*`
+3. Add app-specific routes in `backend/src/app.ts`
+4. Add app-specific content in `frontend/src/App.tsx`
+5. Update Azure AD group IDs and secret paths in `.env.example`
+6. Bootstrap Terraform — see `DEPLOYMENT.md`
 
 ---
 
@@ -93,29 +130,43 @@ See `DEPLOYMENT.md` for first-time Terraform bootstrap steps.
 
 ---
 
+## Documentation
+
+| File | When to update |
+|------|---------------|
+| `README.md` | Any time setup, run steps, architecture, or env vars change |
+| `ONBOARDING.md` | Any time a new engineer would get stuck following the current version |
+| `DEPLOYMENT.md` | Any time Terraform or deploy steps change |
+| `SECURITY.md` | Any time the auth model, secrets approach, or security posture changes |
+| `TECHNICAL_DECISIONS.md` | Every architectural decision — before implementation, not after |
+| `RELEASE.md` | Every PR — add a changelog entry |
+
+Docs that are out of date are treated as bugs, not nice-to-haves.
+
+---
+
 ## Compliance enforcement model
 
 BLADE uses two complementary layers:
 
 | Layer | What it enforces | When it runs |
 |-------|-----------------|--------------|
-| **Agent instructions** (`.blade/AGENT_INSTRUCTIONS.md`) | Architecture decisions, tech stack choices, code quality, security posture, QA standards | Every agent session — agent reads and follows these before writing code |
+| **Agent instructions** (`.blade/AGENT_INSTRUCTIONS.md`) | Architecture decisions, tech stack choices, code quality, security posture, QA standards, agent behavior | Every agent session |
 | **CI/CD gates** (GitHub Actions) | Lint, tests, `npm audit`, TypeScript, no hardcoded secrets | Every PR — automated, cannot be bypassed without bypassing branch protection |
 
-A future direction (not yet implemented) is a **reusable BLADE compliance workflow** — a GitHub Actions workflow hosted in this repo that apps can reference directly:
+A future direction is a **reusable BLADE compliance workflow** — a GitHub Actions workflow hosted in this repo that any app can reference:
 
 ```yaml
-# In any BLADE app's .github/workflows/ci.yml
 jobs:
   blade-check:
     uses: LumenTech-Prod/blade/.github/workflows/blade-check.yml@main
 ```
 
-This would let BLADE enforce structural compliance (required files, Dependabot config, audit thresholds) across all apps automatically, picking up improvements to the check whenever BLADE is updated — without re-cloning. Contributions welcome.
+This would enforce structural compliance (required files, Dependabot config, audit thresholds) across all apps automatically, picking up improvements without re-cloning. Contributions welcome.
 
 ---
 
-
+## BLADE's own decisions — and why
 
 These choices were derived from an analysis of existing Lumen AI-developed applications — surveying what was working well across the portfolio and selecting the best-proven patterns for each area.
 
