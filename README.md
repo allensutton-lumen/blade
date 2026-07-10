@@ -33,7 +33,7 @@ These are the choices made for BLADE itself, documented as an example of what a 
 ## Quick Start
 
 ```powershell
-git clone https://github.com/allensutton-lumen/blade.git my-app
+git clone https://github.com/LumenTech-Prod/blade.git my-app
 cd my-app
 # Read .forge/AGENT_INSTRUCTIONS.md before doing anything else
 # Then start a tech stack discussion with your AI agent
