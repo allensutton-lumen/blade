@@ -1,16 +1,23 @@
 # BLADE
 
-**Blueprint for Lumen AI-Driven Engineering** — a production-ready GitHub template for Lumen AI-developed applications.
+**Blueprint for Lumen AI-Driven Engineering** — an AI development assistant standard for Lumen internal applications.
 
 ## What is BLADE?
 
-BLADE is the standard starting point for Lumen internal apps built with AI agents (GitHub Copilot CLI, Cursor, etc.). It encodes best practices observed across production Lumen AI apps and provides:
+AI agents are good at writing code quickly. What they're less reliable at — without explicit instruction — is everything that surrounds the code: keeping documentation current, flagging security vulnerabilities, running quality checks, cleaning up dead code, decomposing oversized files, and maintaining a consistent bar as the codebase grows. Developers working with AI often end up doing all of that manually, or not at all.
 
-- A working full-stack skeleton (React + Node/Express + Terraform) deployable on day one
-- A branching strategy, PR workflow, and CI/CD pipeline pre-wired
-- Agent instructions (`.blade/AGENT_INSTRUCTIONS.md`) that govern every development session — including a session-start ritual, branching enforcement, GitHub security alert checks, and honest-by-default agent behavior
-- A security evaluation checklist and QA scoring rubric derived from the Lumen SRE app baseline
-- Automatic BLADE standards refresh at the start of every session, so apps stay current without re-cloning
+BLADE solves this by giving the agent a standing set of responsibilities it carries out throughout every development session — not just when asked:
+
+- **Security:** checks GitHub for open Dependabot, secret scanning, and code scanning alerts at session start; runs a 25-item security checklist before any PR reaches `prod` or `main`; flags hardcoded secrets, missing input validation, open CORS, and weak IAM posture as it works
+- **Code quality:** breaks up monolithic files and oversized functions proactively; removes dead code, unused imports, and unexplained `any` types; extracts repeated logic into shared utilities and hooks
+- **Documentation:** updates `README`, `ONBOARDING`, `DEPLOYMENT`, `SECURITY`, `TECHNICAL_DECISIONS`, and `RELEASE` in the same commit as the code change — not as an afterthought
+- **QA:** scores the app against an 8-category quality rubric (architecture, testing, security, performance, dependencies, documentation, error handling, code quality) on demand or before major releases
+- **Dependency hygiene:** keeps `npm audit` and `pip-audit` clean in CI; Dependabot configured out of the box for weekly updates
+- **Honesty:** raises concerns before acting on a bad idea, names technical debt when creating it, and does not simply agree with the developer to avoid friction
+
+The agent pulls the latest version of these standards from the central BLADE repo at the start of every session, so improvements to the standard propagate to all apps automatically.
+
+BLADE also includes a full-stack scaffold (React + Node/Express + Terraform + GitHub Actions) so new apps have a working, deployable baseline from day one. The scaffold reflects the stack used across Lumen AI apps — keeping things consistent makes onboarding and cross-team maintenance easier. But the scaffold is a starting point, not a constraint; every decision is documented and negotiable.
 
 BLADE currently targets **AWS**. Azure and GCP Terraform support can be added as contributions.
 

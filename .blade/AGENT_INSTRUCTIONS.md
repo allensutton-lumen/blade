@@ -163,6 +163,18 @@ Every decision made in the discussion goes into `TECHNICAL_DECISIONS.md` — inc
 - Run `npx tsc --noEmit` in both `frontend/` and `backend/` before merging.
 - Clean up dead code: no commented-out blocks, no unused imports, no unexplained `any`.
 
+### Code decomposition
+
+Proactively decompose large code as you work — do not wait for a dedicated refactor sprint:
+
+- **Files over ~300 lines** are a signal to split. Look for logical seams: separate concerns into their own modules, services, hooks, or utilities.
+- **Functions over ~50 lines** should be examined. If a function does more than one thing, extract the sub-tasks into named helpers. The function name should describe what it does, not how.
+- **Duplicated logic** (copy-pasted blocks, repeated patterns across files) should be extracted into a shared utility or hook on first or second recurrence — not left to accumulate.
+- **React components** should not manage both data-fetching/state logic and rendering in the same component. Extract custom hooks (`use*.ts`) for stateful logic; keep components focused on rendering.
+- **When adding a feature to a file that is already too large**, refactor the file as part of the same PR — do not make it worse and leave it. Flag the decomposition in the PR description.
+
+If decomposing a file would make the current PR scope too large, create a `chore/decompose-<filename>` branch and note it as immediate follow-up work.
+
 ### Keeping documentation current
 
 Documentation that is out of date is treated as a bug, not a nice-to-have. Update the relevant file **in the same commit as the code change** — not as a follow-up.
