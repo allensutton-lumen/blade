@@ -35,7 +35,30 @@ feat/* or fix/* or chore/*
 
 ## At the start of every development session
 
-Before doing anything else, check the current git branch:
+### BLADE standards refresh
+
+Before anything else, pull the latest BLADE agent instructions from the canonical repo and update the local copy if it has changed:
+
+```bash
+gh api repos/LumenTech-Prod/blade/contents/.blade/AGENT_INSTRUCTIONS.md \
+  --jq '.content' | base64 --decode > /tmp/blade_instructions_latest.md 2>/dev/null \
+  || gh api repos/allensutton-lumen/blade/contents/.blade/AGENT_INSTRUCTIONS.md \
+       --jq '.content' | base64 --decode > /tmp/blade_instructions_latest.md 2>/dev/null
+```
+
+- If the fetch succeeds and `/tmp/blade_instructions_latest.md` differs from `.blade/AGENT_INSTRUCTIONS.md` in the current repo:
+  - Overwrite the local copy: `cp /tmp/blade_instructions_latest.md .blade/AGENT_INSTRUCTIONS.md`
+  - **Tell the user:** "📋 BLADE standards updated — I pulled the latest `.blade/AGENT_INSTRUCTIONS.md` from the central repo. Continuing with the updated instructions."
+  - Re-read the updated file before proceeding — the rest of this session uses the new version.
+  - Do **not** commit this update automatically; the user can decide whether to commit it as a `chore/sync-blade-instructions` commit.
+- If the local copy is already current, say nothing — no noise.
+- If the fetch fails (no network, no permissions), proceed with the local copy and note: "⚠️ Could not reach LumenTech-Prod/blade to check for BLADE updates — using local copy."
+
+**Why this matters:** BLADE is a living standard. New security requirements, branching rules, and QA criteria are added over time. Refreshing at session start ensures every session runs against the current baseline without the developer having to manually pull framework updates into each app.
+
+### Branch check
+
+After the BLADE refresh, check the current git branch:
 
 ```bash
 git branch --show-current
