@@ -10,26 +10,25 @@ The defaults below represent the best-of-breed choices across the apps surveyed 
 
 ## BLADE's own decisions — and why
 
-These are the choices made for BLADE itself, documented as an example of what a completed `TECHNICAL_DECISIONS.md` looks like.
+These are the choices made for BLADE itself. They were derived from an analysis of existing Lumen AI-developed applications — surveying what was working well across the portfolio and selecting the best-proven patterns for each area. This also serves as an example of what a completed `TECHNICAL_DECISIONS.md` looks like.
 
 | Area | Decision | Rationale |
 |------|----------|-----------|
-| **Frontend** | React 19 + Vite + TypeScript | Used in 3 of 4 surveyed apps. Faster build than Angular (Vite vs webpack), more universal skillset, strong AI tooling support. Angular was the outlier and added framework-specific complexity without benefit for most app types. |
-| **Backend** | Node/Express + TypeScript | Keeps the full stack in one language (TypeScript), reducing context switching. Express is familiar, minimal, and well-understood by Copilot. Python/FastAPI is better for ML-heavy workloads — use it then. |
-| **Auth** | Azure AD MSAL + JWKS | Lumen SSO standard. MSAL handles the browser-side OAuth2 flow; JWKS validation keeps the backend stateless. All surveyed apps used this pattern. |
-| **Runtime config** | `/api/config` endpoint | Serves Azure tenant/client IDs to the frontend at runtime from Secrets Manager. Avoids hardcoding IDs in frontend bundles or Vite env vars. |
-| **Data storage** | No DB by default; DynamoDB if needed | Many Lumen tools don't need persistence — they query external systems (ServiceNow, AppDynamics, etc.). DynamoDB is the natural fit for serverless Lambda apps when persistence is needed. SQLite is a strong alternative for read-heavy dashboards where an ETL job periodically populates the DB — mount SQLite on EFS for Lambda persistence (pattern used in the SALEFA metrics dashboard). |
-| **Secrets** | AWS Secrets Manager | All surveyed apps use it. Avoids plaintext secrets in env vars, works well with Lambda, easy IAM-scoped access. |
-| **CSS/Branding** | Chi design system | Lumen's official design system. One of the surveyed apps (wave_path_comp) used it — it is the correct on-brand choice. Other apps used ad-hoc Lumen color vars which is the next-best option. Angular Material (used in the outage tool) is not Lumen-branded. |
-| **CI/CD** | GitHub Actions + OIDC | OIDC eliminates long-lived AWS access keys in GitHub secrets — a significant security improvement over static keys used in older apps. Outage tool pioneered this pattern; BLADE adopts it as the default. |
-| **Security middleware** | Helmet + fail-closed CORS + rate limiting | Helmet from the outage tool; fail-closed CORS and token-bucket rate limiting from the GCR dashboard (most hardened of the surveyed apps). WAF optional via Terraform variable. |
-| **Logging** | Structured JSON + correlation IDs | Outage tool introduced this. CloudWatch works far better with structured JSON — you can filter/query logs by correlationId, level, or any field. `console.log` is not acceptable in Lambda. |
-| **Input validation** | express-validator | Provides declarative field-level validation and a standard 422 error shape. Consistent across all Express endpoints. |
-| **Dev tooling** | PS1 + SH cross-platform scripts | Wave path comp had both — engineers use both Windows and Mac. SSO credential extraction from CLI cache (from outage tool) solves the Terraform + SSO incompatibility. |
-| **Terraform** | Modular .tf files + OIDC IAM roles + optional WAF | Outage tool has the most complete Terraform (OIDC roles, modular structure). GCR dashboard adds WAF. Combined here. |
-| **Testing** | Jest unit + Playwright E2E | Wave path comp had the most complete test setup. Unit tests mock all external calls; E2E tests use Playwright with MSAL mocking. Coverage thresholds enforced. |
-| **Docs** | 6 MD files + `.forge/AGENT_INSTRUCTIONS.md` | Outage tool had the most complete documentation (7 MD files). README, ONBOARDING, DEPLOYMENT, SECURITY, TECHNICAL_DECISIONS, RELEASE cover the full lifecycle. |
-
+| **Frontend** | React 19 + Vite + TypeScript | The most common frontend stack across surveyed Lumen apps. Vite build speed is significantly faster than webpack-based alternatives, TypeScript catches errors at compile time, and the ecosystem has strong AI tooling support. Angular is a valid alternative when a team has deep existing expertise. |
+| **Backend** | Node/Express + TypeScript | Keeps the full stack in one language, reducing context switching for both engineers and AI agents. Express is minimal and well-understood. Python/FastAPI is the better choice for ML-heavy workloads. |
+| **Auth** | Azure AD MSAL + JWKS | Lumen SSO standard across all surveyed apps. MSAL handles the browser-side OAuth2 flow; JWKS validation keeps the backend stateless and avoids session management. |
+| **Runtime config** | `/api/config` endpoint | Serves Azure tenant/client IDs to the frontend at runtime from Secrets Manager. Avoids hardcoding IDs in frontend bundles or build-time env vars, making the same build deployable to any environment. |
+| **Data storage** | No DB by default; DynamoDB or SQLite when needed | Many Lumen tools query external systems (ServiceNow, AppDynamics, etc.) and need no persistence of their own. When persistence is needed, DynamoDB fits serverless Lambda naturally. SQLite on EFS is a strong alternative for read-heavy dashboards backed by a periodic ETL job. |
+| **Secrets** | AWS Secrets Manager | Consistent across all surveyed apps. Avoids plaintext secrets in environment variables, integrates cleanly with Lambda via IAM, and allows secret rotation without redeployment. |
+| **CSS/Branding** | Chi design system | Lumen official design system. Provides on-brand typography, colors, and components without custom CSS overhead. Lumen CSS custom properties (`--lumen-cyan`, `--lumen-dark-blue`, etc.) are included for cases where Chi components do not cover a need. |
+| **CI/CD** | GitHub Actions + OIDC | OIDC eliminates long-lived AWS access keys stored as GitHub secrets. Branch-to-environment mapping makes promotion explicit. PR gates on typecheck, lint, tests, and audit run before any merge. |
+| **Security middleware** | Helmet + fail-closed CORS + rate limiting | Helmet sets secure HTTP headers with one line. Fail-closed CORS (deny by default, allowlist specific origins) was the most hardened pattern found across surveyed apps. Token-bucket rate limiting protects write endpoints from abuse. |
+| **Logging** | Structured JSON + correlation IDs | CloudWatch is far more useful when logs are structured — you can filter by `correlationId`, `level`, `userId`, or any field. Every request gets a UUID that flows through all log lines for that request. |
+| **Input validation** | express-validator | Declarative field-level validation with a consistent 422 error shape. Applied on every POST/PUT endpoint so validation errors are never swallowed or inconsistently formatted. |
+| **Dev tooling** | Cross-platform scripts (PS1 + SH) | Engineers use both Windows and Mac. Both scripts handle AWS SSO credential extraction for Terraform, port cleanup, and parallel server startup. |
+| **Terraform** | Modular .tf files + OIDC IAM roles + optional WAF | Modular structure keeps each concern in its own file. GitHub Actions OIDC roles are provisioned by Terraform so there are no manual IAM steps. WAF is included but disabled by default. |
+| **Testing** | Jest unit + Playwright E2E scaffold | Unit tests mock all external calls and run in CI on every PR. Playwright E2E scaffold with MSAL mock helper is included so end-to-end tests can be added incrementally. Coverage thresholds are enforced. |
+| **Documentation** | 6 MD files + `.forge/AGENT_INSTRUCTIONS.md` | README, ONBOARDING, DEPLOYMENT, SECURITY, TECHNICAL_DECISIONS, and RELEASE cover the full app lifecycle. The agent instructions file is what distinguishes BLADE from a plain template. |
 ## Quick Start
 
 ```powershell
