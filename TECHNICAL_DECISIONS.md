@@ -1,65 +1,103 @@
 # Technical Decisions
 
-## Framework defaults
+> This document is created during the initial tech stack discussion between the developer and the AI agent, then updated as new architectural decisions are made throughout the project. It is **not** pre-filled — every entry here represents a real decision made by the team.
 
-### Frontend: React 19 + Vite + TypeScript
-**Decision:** Use React 19 with Vite and strict TypeScript.
+---
 
-**Rationale:** Fast development, strong typing, and simple AI-assisted iteration.
+## Initial Tech Stack Discussion
 
-### Backend: Express + TypeScript on AWS Lambda
-**Decision:** Use Express 5 wrapped by `serverless-http`.
+**Date:**
+**App name:**
+**Participants:**
 
-**Rationale:** Shared Node/TypeScript stack and easy local/Lambda parity.
+### Frontend
 
-### Authentication: Azure AD JWT + JWKS
-**Decision:** Frontend uses MSAL; backend validates tokens with Azure AD JWKS.
+**Options considered:**
+<!-- e.g. React + Vite, Angular, Vue, plain HTML/JS, no frontend (API only) -->
 
-**Rationale:** Aligns with Lumen SSO and keeps the backend stateless.
+**Decision:**
 
-### Authorization: Azure AD groups
-**Decision:** Standard user/admin authorization is enforced via group membership.
+**Rationale:**
 
-### Runtime config delivery
-**Decision:** Frontend auth configuration is served by `GET /api/config`.
+---
 
-### Secrets management
-**Decision:** Use AWS Secrets Manager for Azure and integration credentials.
+### Backend
 
-### Design system
-**Decision:** Use Chi via CDN (`https://assets.ctl.io/chi/6.1.0/chi.css`).
+**Options considered:**
+<!-- e.g. Node/Express (TypeScript), Node/Express (JS), Python/FastAPI, Python/Flask, no backend (static + direct AWS), serverless vs containerized -->
 
-### Security middleware
-**Decision:** Helmet + fail-closed CORS + correlation IDs + structured request logging + rate limiting.
+**Decision:**
 
-### Validation
-**Decision:** Use `express-validator` for all request validation.
+**Rationale:**
 
-### Logging
-**Decision:** Use structured JSON logging with correlation IDs.
+---
+
+### Authentication
+
+**Options considered:**
+<!-- e.g. Azure AD MSAL + JWKS, no auth (internal tool), API key only, AWS Cognito -->
+
+**Decision:**
+
+**Rationale:**
+
+---
+
+### Data Storage
+
+**Options considered:**
+<!-- e.g. No persistence needed, DynamoDB (serverless/scalable), SQLite (simple/low-volume), PostgreSQL (relational/complex queries), S3 (files/blobs), external system of record only -->
+
+**Decision:**
+
+**Rationale:**
+
+---
+
+### AWS Services
+
+**Options considered:**
+<!-- e.g. Lambda + ALB, ECS, App Runner; DynamoDB vs RDS; with/without WAF -->
+
+**Decision:**
+
+**Rationale:**
+
+---
 
 ### CI/CD
-**Decision:** Use GitHub Actions with OIDC into AWS.
 
-### Infrastructure
-**Decision:** Terraform provisions Lambda, ALB integration, Route53, ACM, DynamoDB, IAM, and optional WAF.
+**Options considered:**
+<!-- e.g. GitHub Actions OIDC, static keys, manual deploy only, Jenkins -->
 
-## App-specific decisions
+**Decision:**
 
-### App name
-- Human-readable name:
-- Terraform/project slug:
-- Domain(s):
+**Rationale:**
+
+---
 
 ### Integrations
-- Primary upstream systems:
-- Lumen systems involved:
-- External dependencies:
 
-### Data storage
-- Required persistence:
-- Record model:
-- Retention/audit needs:
+**Upstream systems:**
+<!-- ServiceNow, AppDynamics, SASI, Bedrock, Splunk, SharePoint, etc. -->
 
-### Deviations from framework defaults
-- List any intentional deviations here with rationale.
+**Auth method per integration:**
+
+---
+
+### Anything else discussed
+
+---
+
+## Ongoing Decisions
+
+> Add new sections below as decisions are made during development.
+
+<!--
+### [Decision title] — [Date]
+**Context:**
+**Decision:**
+**Rationale:**
+**Alternatives rejected:**
+-->
+
