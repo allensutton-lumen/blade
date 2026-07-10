@@ -1,0 +1,69 @@
+name: Deploy
+
+on:
+  push:
+    branches: [dev, prod]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        type: choice
+        options: [dev, prod]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-environment:
+    runs-on: ubuntu-latest
+    outputs:
+      github_environment: ${{ steps.resolve.outputs.github_environment }}
+      deploy_env: ${{ steps.resolve.outputs.deploy_env }}
+    steps:
+      - id: resolve
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TARGET="${{ github.event.inputs.environment }}"
+          else
+            TARGET="${{ github.ref_name }}"
+          fi
+          case "$TARGET" in
+            dev) echo "github_environment=blade-dev-01" >> "$GITHUB_OUTPUT"; echo "deploy_env=dev" >> "$GITHUB_OUTPUT" ;;
+            prod) echo "github_environment=blade-prod-01" >> "$GITHUB_OUTPUT"; echo "deploy_env=prod" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::Unsupported deploy target '$TARGET'"; exit 1 ;;
+          esac
+
+  deploy:
+    needs: resolve-environment
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-environment.outputs.github_environment }}
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      DEPLOY_ENV: ${{ needs.resolve-environment.outputs.deploy_env }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            frontend/package-lock.json
+            backend/package-lock.json
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '~1.9'
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: us-east-2
+      - shell: pwsh
+        run: ./deploy.ps1 -Environment $env:DEPLOY_ENV -CIMode -SkipPlan

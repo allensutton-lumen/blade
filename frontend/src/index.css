@@ -1,0 +1,28 @@
+/* Chi Design System — https://chi.centurylink.com */
+/* Import Chi in index.html: <link rel="stylesheet" href="https://assets.ctl.io/chi/6.1.0/chi.css"> */
+
+:root {
+  --lumen-dark-blue: #0f1a2b;
+  --lumen-blue: #1b4f91;
+  --lumen-cyan: #00b5e2;
+  --lumen-purple: #6e2585;
+  --lumen-white: #ffffff;
+  --lumen-light-gray: #f5f5f5;
+  --lumen-mid-gray: #6b7280;
+  --lumen-dark-gray: #374151;
+  --lumen-success: #22c55e;
+  --lumen-warning: #f59e0b;
+  --lumen-error: #ef4444;
+  /* Typography */
+  --font-primary: 'Gotham', 'Segoe UI', 'Roboto', Arial, sans-serif;
+  --font-mono: 'Courier New', monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { min-height: 100%; }
+body {
+  margin: 0;
+  font-family: var(--font-primary);
+  background: var(--lumen-light-gray);
+  color: var(--lumen-dark-blue);
+}
