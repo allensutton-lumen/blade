@@ -47,6 +47,29 @@ git branch --show-current
 
 **Why this matters:** Commits made directly to `dev`, `prod`, or `main` bypass CI gates, skip code review, and can break deployments. A wrong branch is much harder to fix after the fact.
 
+### Security alert check
+
+After confirming the branch, check for open GitHub security alerts and report any findings to the user **before** starting work:
+
+```bash
+# Dependabot vulnerability alerts
+gh api repos/{owner}/{repo}/vulnerability-alerts 2>/dev/null \
+  && gh dependabot alerts list --state open --json number,severity,summary,packageName 2>/dev/null \
+  || echo "Dependabot alerts not available (may need GitHub Advanced Security)"
+
+# Secret scanning alerts
+gh secret-scanning list --state open 2>/dev/null || true
+
+# Code scanning alerts
+gh code-scanning list --state open 2>/dev/null || true
+```
+
+If **any** alerts are open:
+- List them to the user grouped by severity (critical → high → medium → low).
+- For **critical or high** severity: ask the user whether to address them before starting the planned work. Do not silently skip them.
+- For **medium or low**: mention them but do not block — continue with the planned work and note that a `fix/security-deps` branch should be opened soon.
+- If the `gh` CLI returns permission errors, note that GitHub Advanced Security may not be enabled and remind the user to check the **Security** tab in the repo settings.
+
 ---
 
 ## Before writing any code
@@ -123,3 +146,86 @@ Every decision made in the discussion goes into `TECHNICAL_DECISIONS.md` — inc
 - **Branding:** Chi design system from `https://assets.ctl.io/chi/6.1.0/chi.css` + Lumen CSS vars in `frontend/src/index.css`.
 - **Security headers:** Helmet is already configured — do not remove it.
 - **Rate limiting:** `standardLimiter` and `strictLimiter` are already wired — apply `strictLimiter` to any write endpoints.
+
+---
+
+## Security evaluation
+
+Run a security evaluation at two trigger points:
+1. **Before opening a PR to `prod` or `main`** — run the checklist below and report results.
+2. **When asked by the developer** — run on demand at any time.
+
+The standard below is derived from the Lumen SRE app security baseline (established in `ld-wave-path-studio`).
+
+### Checklist
+
+**Authentication and authorization**
+- [ ] All `/api/*` endpoints require a valid JWT except documented health/readiness endpoints.
+- [ ] Ownership is enforced for every read/update/delete on user-scoped data (explicit 404 before delete/update, not just relying on composite key matching).
+- [ ] `SKIP_AUTH=true` is blocked in Lambda (env var `AWS_LAMBDA_FUNCTION_NAME` set → skip auth never takes effect).
+- [ ] Role/claims extraction is validated before granting access.
+
+**Secrets and configuration**
+- [ ] No secrets, tenant IDs, account IDs, or API keys are hardcoded in source code or committed to the repo.
+- [ ] `.env.example` contains only placeholder strings — no real values.
+- [ ] Runtime secrets come from AWS Secrets Manager, not environment variables baked into the Lambda package.
+- [ ] `VITE_*` env vars are build-time and client-visible — confirm none contain sensitive values.
+
+**Input validation**
+- [ ] Every POST/PUT endpoint validates the request body with a schema (express-validator for Node; Pydantic for Python).
+- [ ] Invalid payloads return HTTP 422 with a structured, client-safe error — never raw stack traces.
+- [ ] Frontend sanitizes any user-provided content before rendering HTML-like output.
+- [ ] External API responses (Bedrock, third-party APIs) are validated before being used — do not trust upstream output blindly.
+
+**Transport and headers**
+- [ ] All traffic is HTTPS; HTTP → HTTPS redirect is enforced at the ALB.
+- [ ] `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` are present on every response.
+- [ ] `Strict-Transport-Security` (HSTS) is set either in middleware or at the ALB.
+- [ ] CORS is fail-closed: only explicitly allowlisted origins are accepted. No wildcard `*` in production.
+
+**Logging and observability**
+- [ ] Structured JSON logs on every request — no `console.log` in production backend code.
+- [ ] A correlation/request ID is generated per request and included in all log lines and downstream calls.
+- [ ] Credentials, tokens, authorization headers, and raw PII are never logged.
+- [ ] User-provided free text is sanitized before logging (prevent log injection).
+- [ ] Unhandled exceptions return a generic `500` to the client; the full stack trace is logged server-side only.
+
+**Infrastructure and CI/CD**
+- [ ] GitHub Actions uses OIDC role assumption — no long-lived static AWS credentials stored as secrets.
+- [ ] IAM roles follow least-privilege: only the specific actions and resource ARNs needed are granted.
+- [ ] Dependabot is configured (`.github/dependabot.yml`) with weekly updates for all package ecosystems used.
+- [ ] `npm audit --audit-level=high --omit=dev` (or `pip-audit`) runs in CI and blocks on high/critical findings.
+- [ ] WAF is enabled in Terraform for any public-facing app or app handling sensitive data.
+
+**External dependency resilience**
+- [ ] All external calls (AWS services, third-party APIs) have explicit timeouts.
+- [ ] Retry/backoff logic distinguishes retryable (502/503/429) from non-retryable (400/401/403) failures.
+- [ ] The `/health` endpoint checks dependencies and returns `degraded` status without exposing internal error details.
+
+### Reporting
+
+After running the checklist, report results as:
+- ✅ **Pass** — item confirmed
+- ⚠️ **Gap** — item not implemented; include the file and a one-line fix suggestion
+- ➖ **N/A** — item does not apply to this app (explain why)
+
+If **3 or more gaps** are found, ask the user whether to address them now (opening a `fix/security-hardening` branch) or defer to a dedicated security sprint.
+
+---
+
+## QA self-assessment
+
+When asked to evaluate code quality, or before any major release, score the app against the following rubric (based on the Lumen SRE app quality standard):
+
+| Category | Weight | What to look for |
+|----------|--------|-----------------|
+| **Architecture** | 15% | Separation of concerns, hook/service extraction, no monolithic files, correlation middleware |
+| **Code quality** | 15% | No dead code, no commented-out blocks, no unexplained `any`, singletons for expensive clients, no cross-module private imports |
+| **Testing** | 20% | Unit tests for all service/util modules with mocked externals; frontend component/hook tests; ≥80% coverage on business logic |
+| **Security** | 15% | All items in the security checklist above pass |
+| **Performance** | 10% | No synchronous calls in async contexts, module-level singletons, no per-request client construction |
+| **Dependencies** | 5% | Dependabot enabled, no known high/critical CVEs in production deps, type-only packages in devDependencies |
+| **Documentation** | 10% | README accurate, ONBOARDING enables 30-min setup, SECURITY.md current, RELEASE.md has changelog |
+| **Error handling** | 10% | All exceptions logged with context, no silent swallowing, structured client-safe error responses |
+
+Score each category 0–100 and compute a weighted total. Report the weighted score and grade (A+ ≥ 95, A ≥ 90, B+ ≥ 77, B ≥ 70, below 70 = needs work). For any category below 80, list the top 2–3 specific gaps with suggested fixes.
