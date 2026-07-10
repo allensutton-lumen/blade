@@ -163,6 +163,17 @@ Every decision made in the discussion goes into `TECHNICAL_DECISIONS.md` — inc
 - Run `npx tsc --noEmit` in both `frontend/` and `backend/` before merging.
 - Clean up dead code: no commented-out blocks, no unused imports, no unexplained `any`.
 
+### Post-deploy verification
+
+After every deployment (dev, prod, or otherwise), verify the deployment is healthy before closing the session:
+
+1. Hit the `/health` endpoint and confirm `status: "ok"` (not `"degraded"`)
+2. Check CloudWatch Logs for the Lambda function — look for error-level entries or cold-start failures in the first 2–3 invocations
+3. Confirm the frontend loads and clears the login page (MSAL redirect working)
+4. If Terraform outputs changed (new domain, new ALB rule ARN), update `DEPLOYMENT.md` and `.env.example` accordingly
+
+If `/health` returns `degraded`, do not consider the deployment complete — investigate the failing dependency check before wrapping up.
+
 ### Code decomposition
 
 Proactively decompose large code as you work — do not wait for a dedicated refactor sprint:
@@ -211,9 +222,11 @@ If a change affects multiple docs, update all of them. Partial doc updates are w
 - **Secrets:** use AWS Secrets Manager via `utils/secrets.ts` — no hardcoded credentials.
 - **Domain naming:** `<app-name>.<env>.ld.lumen.com`
 - **AWS accounts:** dev=`396304931560`, prod=`111491017663` (document in `.env.example` but confirm with team — may vary).
-- **Branding:** Chi design system from `https://assets.ctl.io/chi/6.1.0/chi.css` + Lumen CSS vars in `frontend/src/index.css`.
-- **Security headers:** Helmet is already configured — do not remove it.
+- **Branding:** Chi design system v7.13.0 from `https://lib.lumen.com/chi/7.13.0/chi.css`. Add `class="chi"` to the `<html>` element. Use Chi **Web Components** (`<chi-button>`, `<chi-alert>`, `<chi-modal>`, etc.) — not legacy CSS classes. Chi Web Components handle accessibility automatically.
+- **Security headers:** Helmet is already configured — do not remove it. It provides CSP, `Permissions-Policy`, HSTS, and other headers automatically.
 - **Rate limiting:** `standardLimiter` and `strictLimiter` are already wired — apply `strictLimiter` to any write endpoints.
+- **Python linting:** use **Ruff** (`ruff check`) when the backend is Python — it is faster and more comprehensive than flake8/pylint and is the standard in Lumen Python apps.
+- **Production deploys:** Lumen requires a **GCR (Global Change Request)** for all production deployments. Before deploying to prod, ensure a GCR is opened, approved, and in an active change window. Do not deploy to production without a GCR — this is a compliance requirement, not a suggestion.
 
 ---
 
@@ -240,38 +253,45 @@ The standard below is derived from the Lumen SRE app security baseline (establis
 - [ ] Runtime secrets come from AWS Secrets Manager, not environment variables baked into the Lambda package.
 - [ ] `VITE_*` env vars are build-time and client-visible — confirm none contain sensitive values.
 - [ ] Secrets Manager IAM grants are scoped to a specific ARN prefix (e.g., `arn:aws:secretsmanager:*:*:secret:my-app/*`) — not wildcard `*` on all secrets.
+- [ ] Secrets Manager responses are cached in-process with a short TTL (≤5 min) — reduces API calls while still picking up rotated credentials promptly.
+- [ ] **All files** are checked for committed secrets — including docs, markdown, and config files, not just source code. Secret scanning in GitHub should be enabled.
 
 **Input validation**
 - [ ] Every POST/PUT endpoint validates the request body with a schema (express-validator for Node; Pydantic for Python).
 - [ ] Invalid payloads return HTTP 422 with a structured, client-safe error — never raw stack traces.
-- [ ] Frontend sanitizes any user-provided content before rendering HTML-like output.
+- [ ] Frontend sanitizes any user-provided content before rendering HTML-like output — use **DOMPurify** (or equivalent) for any content that could contain HTML. Do not rely on React's default escaping alone for content from external sources.
 - [ ] External API responses (Bedrock, third-party APIs) are validated before being used — do not trust upstream output blindly.
 
 **Transport and headers**
 - [ ] All traffic is HTTPS; HTTP → HTTPS redirect is enforced at the ALB.
 - [ ] `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy` are present on every response.
 - [ ] `Strict-Transport-Security` (HSTS) is set either in middleware or at the ALB.
+- [ ] `Content-Security-Policy` is configured — Helmet provides defaults; review and tighten for the app's actual sources.
+- [ ] `Permissions-Policy` header is set (Helmet provides this automatically — confirm it is not being removed).
 - [ ] CORS is fail-closed: only explicitly allowlisted origins are accepted. No wildcard `*` in production.
 
 **Logging and observability**
 - [ ] Structured JSON logs on every request — no `console.log` in production backend code.
 - [ ] A correlation/request ID is generated per request and included in all log lines and downstream calls.
 - [ ] Credentials, tokens, authorization headers, and raw PII are never logged.
-- [ ] User-provided free text is sanitized before logging (prevent log injection).
+- [ ] User-provided free text is sanitized before logging — **explicitly strip CR (`\r`) and LF (`\n`) characters** to prevent log injection attacks.
 - [ ] Unhandled exceptions return a generic `500` to the client; the full stack trace is logged server-side only.
 - [ ] CloudWatch log group has a retention policy set (recommended: 90 days) — do not leave retention as "Never expire".
 
 **Infrastructure and CI/CD**
 - [ ] GitHub Actions uses OIDC role assumption — no long-lived static AWS credentials stored as secrets.
+- [ ] All GitHub Actions workflows declare a `permissions` block — use `permissions: contents: read` as the default and grant only what each job actually needs. Workflows without a `permissions` block inherit overly broad defaults.
+- [ ] All `uses:` actions in GitHub Actions workflows are pinned to a **commit SHA**, not a floating version tag (e.g., `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683` not `@v4`). Tags can be moved; SHAs cannot.
 - [ ] IAM roles follow least-privilege: only the specific actions and resource ARNs needed are granted.
 - [ ] Lambda function is deployed into a private VPC subnet and is not directly internet-accessible — all inbound traffic must flow through the ALB.
 - [ ] Dependabot is configured (`.github/dependabot.yml`) with weekly updates for all package ecosystems used.
 - [ ] `npm audit --audit-level=high --omit=dev` (or `pip-audit`) runs in CI and blocks on high/critical findings.
-- [ ] WAF is enabled in Terraform for any public-facing app or app handling sensitive data.
+- [ ] WAF is enabled in Terraform for any public-facing app or app handling sensitive data. Enable at minimum: `AWSManagedRulesCommonRuleSet`, `AWSManagedRulesSQLiRuleSet`, `AWSManagedRulesKnownBadInputsRuleSet`, and a rate-based rule.
 
 **External dependency resilience**
 - [ ] All external calls (AWS services, third-party APIs) have explicit timeouts.
 - [ ] Retry/backoff logic distinguishes retryable (502/503/429) from non-retryable (400/401/403) failures.
+- [ ] **Circuit breakers** are in place for high-volume or critical external dependencies — a slow or failing upstream should not cascade into full app failure. Implement with a library (`opossum` for Node, `circuitbreaker` pattern for Python) or at the infrastructure level.
 - [ ] The `/health` endpoint checks dependencies and returns `degraded` status without exposing internal error details.
 - [ ] Graceful degradation is implemented where possible — a failing non-critical dependency should degrade, not crash the app.
 
@@ -317,7 +337,7 @@ When asked to evaluate code quality, or before any major release, score the app 
 | **Code quality** | 15% | No dead code, no commented-out blocks, no unexplained `any`, singletons for expensive clients, no cross-module private imports |
 | **Testing** | 20% | Unit tests for all service/util modules with mocked externals; frontend component and hook tests (Vitest); E2E tests for critical user flows (Playwright); contract tests for external API integrations; ≥80% coverage on business logic. All four test types should be present in a mature app. |
 | **Security** | 15% | All items in the security checklist above pass |
-| **Performance** | 10% | No synchronous calls in async contexts, module-level singletons for expensive clients (HTTP, DB, LLM), no per-request client construction |
+| **Performance** | 10% | No synchronous calls in async contexts, module-level singletons for expensive clients (HTTP, DB, LLM), no per-request client construction; JS bundle size checked — bundles over ~500KB minified should use code splitting (`React.lazy` + `Suspense`) |
 | **Dependencies** | 5% | Dependabot enabled, no known high/critical CVEs in production deps, type-only packages in devDependencies, no deprecated framework APIs in use (Pydantic v1 patterns, React legacy lifecycle methods, etc.) |
 | **Documentation** | 10% | README accurate, ONBOARDING enables 30-min setup, SECURITY.md current, RELEASE.md has changelog |
 | **Error handling** | 10% | All exceptions logged with context, no silent swallowing, structured client-safe error responses |

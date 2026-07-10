@@ -18,7 +18,7 @@ BLADE is our standard framework for Lumen AI apps. Here is what it specifies:
 - Frontend: React 19 + Vite + TypeScript
 - Backend: Node/Express + TypeScript on AWS Lambda
 - Auth: Azure AD MSAL (frontend) + JWKS JWT validation (backend)
-- CSS: Chi design system (https://assets.ctl.io/chi/6.1.0/chi.css) + Lumen CSS vars
+- CSS: Chi design system (https://lib.lumen.com/chi/7.13.0/chi.css) + Lumen CSS vars
 - Cloud: AWS (Lambda, ALB, Secrets Manager, DynamoDB optional, Route53, ACM, WAF optional)
 
 **Backend middleware stack (in order)**
