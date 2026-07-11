@@ -34,16 +34,20 @@ feat/* or fix/* or chore/*
         ↓  PR + CI
        dev          ← active integration branch; all feature work lands here first
         ↓  PR + CI
+      test          ← optional; use when formal QA / UAT sign-off is required
+        ↓  PR + CI  (skip if no test branch)
       prod          ← pre-production; mirrors what is staged for release
         ↓  PR + CI
-      main          ← production-stable; only receives merges from prod
+      main          ← canonical copy of the codebase; production-stable
 ```
 
 **Rules:**
-- Never commit directly to `dev`, `prod`, or `main`.
-- Feature, fix, and chore branches always target `dev` as their base and merge destination.
-- `dev → prod` and `prod → main` promotions happen via PR after CI passes.
-- Hotfixes that must skip `dev` (rare) should still go through a `fix/` branch → `prod` → backmerge to `dev`.
+- Never commit directly to `dev`, `test`, `prod`, or `main`.
+- Feature, fix, and chore branches always base off `dev` and target `dev` as their merge destination.
+- `dev → test → prod → main` promotions happen via PR after CI passes at each stage.
+- The `test` branch is optional per app. If the app has no formal QA/UAT process, promote directly `dev → prod → main`. Document the decision in `TECHNICAL_DECISIONS.md`.
+- Hotfixes that must skip `dev` (rare) go through a `fix/` branch → `prod` → backmerge to `dev` (and `test` if it exists).
+- `main` is the canonical copy — it always reflects exactly what is running in production.
 
 **Branch naming conventions:**
 | Prefix | When to use | Example |
@@ -85,7 +89,7 @@ After the BLADE refresh, check the current git branch:
 git branch --show-current
 ```
 
-- If the branch is **`main`, `prod`, `dev`** (or `master`/`develop`) → ask the user what branch they want to work on. Suggest a name based on the task description following the conventions above (e.g., `feat/add-export-button`). Create and switch to it before writing any code.
+- If the branch is **`main`, `prod`, `test`, `dev`** (or `master`/`develop`) → ask the user what branch they want to work on. Suggest a name based on the task description following the conventions above (e.g., `feat/add-export-button`). Create and switch to it before writing any code.
 - If the branch is already a **`feat/`/`fix/`/`chore/` branch** → confirm the name with the user ("I see we're on `fix/some-thing` — continuing work here. Is that right?") and proceed once confirmed.
 - When creating a new branch, always base it off `dev` (not `main`): `git checkout dev && git pull && git checkout -b feat/your-feature`.
 

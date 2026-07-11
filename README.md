@@ -57,12 +57,14 @@ feat/* / fix/* / chore/*
         ↓  PR + CI
        dev          ← all feature work lands here first
         ↓  PR + CI
+      test          ← optional; for formal QA / UAT (skip if not needed)
+        ↓  PR + CI
       prod          ← pre-production; staged for release
         ↓  PR + CI
-      main          ← production-stable only
+      main          ← canonical codebase; always matches production
 ```
 
-Never commit directly to `dev`, `prod`, or `main`. The agent enforces this at session start.
+Never commit directly to `dev`, `test`, `prod`, or `main`. The agent enforces this at session start. Whether to use a `test` branch is documented in `TECHNICAL_DECISIONS.md`.
 
 ---
 
