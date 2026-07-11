@@ -173,25 +173,117 @@ This would enforce structural compliance (required files, Dependabot config, aud
 
 ---
 
-## BLADE's own decisions — and why
+## Design decisions and rationale
 
-These choices were derived from an analysis of existing Lumen AI-developed applications — surveying what was working well across the portfolio and selecting the best-proven patterns for each area.
+BLADE's choices were derived from analysis of the Lumen SRE app portfolio — surveying what was working well and selecting the best-proven patterns for each concern. Everything here is defensible, not arbitrary.
 
-| Area | Decision | Rationale |
-|------|----------|-----------|
-| **Frontend** | React 19 + Vite + TypeScript | The standard frontend stack for Lumen AI apps. Vite build speed is significantly faster than webpack-based alternatives, TypeScript catches errors at compile time, and the ecosystem has strong AI tooling support. |
-| **Backend** | Node/Express + TypeScript | Keeps the full stack in one language, reducing context switching for both engineers and AI agents. Express is minimal and well-understood. Python/FastAPI is the better choice for ML-heavy workloads. |
-| **Auth** | Azure AD MSAL + JWKS | Lumen SSO standard. MSAL handles the browser-side OAuth2 flow; JWKS validation keeps the backend stateless and avoids session management. |
-| **Runtime config** | `/api/config` endpoint | Serves Azure tenant/client IDs to the frontend at runtime from Secrets Manager. Avoids hardcoding IDs in frontend bundles or build-time env vars. |
-| **Data storage** | No DB by default; DynamoDB or SQLite when needed | Many Lumen tools query external systems and need no persistence of their own. DynamoDB fits serverless Lambda naturally. SQLite on EFS is a strong alternative for read-heavy dashboards backed by a periodic ETL job. |
-| **Cloud provider** | AWS | All Lumen AI apps in the surveyed portfolio run on AWS. Lambda, ALB, Secrets Manager, DynamoDB, Route53, ACM, and WAF are provisioned by the included Terraform. Azure and GCP are not currently supported — contributions welcome. |
-| **Secrets** | AWS Secrets Manager | Avoids plaintext secrets in environment variables, integrates cleanly with Lambda via IAM, and allows secret rotation without redeployment. |
-| **CSS/Branding** | Chi design system | Lumen official design system. Provides on-brand typography, colors, and components without custom CSS overhead. |
-| **CI/CD** | GitHub Actions + OIDC | OIDC eliminates long-lived AWS access keys stored as GitHub secrets. Branch-to-environment mapping makes promotion explicit. PR gates on typecheck, lint, tests, and audit run before any merge. |
-| **Security middleware** | Helmet + fail-closed CORS + rate limiting | Helmet sets secure HTTP headers with one line. Fail-closed CORS denies by default. Token-bucket rate limiting protects write endpoints from abuse. |
-| **Logging** | Structured JSON + correlation IDs | CloudWatch is far more useful when logs are structured. Every request gets a UUID that flows through all log lines for that request. |
-| **Input validation** | express-validator | Declarative field-level validation with a consistent 422 error shape on every POST/PUT endpoint. |
-| **Dev tooling** | Cross-platform scripts (PS1 + SH) | Engineers use both Windows and Mac. Both scripts handle AWS SSO credential extraction for Terraform, port cleanup, and parallel server startup. |
-| **Terraform** | Modular .tf files + OIDC IAM roles + optional WAF | Modular structure keeps each concern in its own file. GitHub Actions OIDC roles are provisioned by Terraform. WAF is included but disabled by default. |
-| **Testing** | Jest unit + Playwright E2E scaffold | Unit tests mock all external calls and run in CI on every PR. Playwright E2E scaffold with MSAL mock helper is included so end-to-end tests can be added incrementally. Coverage thresholds are enforced. |
-| **Documentation** | 6 MD files + `.blade/AGENT_INSTRUCTIONS.md` | README, ONBOARDING, DEPLOYMENT, SECURITY, TECHNICAL_DECISIONS, and RELEASE cover the full app lifecycle. The agent instructions file is what distinguishes BLADE from a plain template. |
+### The two-layer standard
+
+BLADE separates requirements into two layers:
+
+- **Universal requirements** — mechanisms that apply to every app regardless of language or framework: structured logging, rate limiting, input validation, auth on all routes, OIDC deploy, SHA-pinned CI, circuit breakers, CRLF stripping, DOMPurify, threat model. The *what* is required; the *how* is stack-dependent.
+- **Per-stack implementation guides** — prescriptive tool choices for each approved stack. This prevents agents from making inconsistent interpretations ("I added logging" could mean `print()` or structured JSON with correlation IDs — these are not equivalent).
+
+This two-layer model means BLADE stays relevant as the tech landscape evolves: new stacks can be added to the per-stack guides without changing the universal requirements.
+
+---
+
+### Stack tier philosophy
+
+Stacks are tiered rather than given a single blessed choice, because the right tool genuinely depends on the problem:
+
+| Tier | Meaning |
+|------|---------|
+| **Primary** | Fully tested in production Lumen apps. All BLADE patterns documented. Prefer for all new work unless there is a specific reason to deviate. |
+| **Approved** | Modern, well-supported, meets all BLADE universal requirements. Good fit for specific use cases. Use when Primary stacks don't fit. |
+| **Avoid** | Not approved for new apps. Legacy, insecure, or a poor match for the Lambda/serverless deployment model. Existing apps using these should have a migration plan. |
+
+---
+
+### Why each stack was chosen (or not)
+
+#### Node.js + Express + TypeScript — *Primary backend*
+
+- Full-stack TypeScript reduces context switching for engineers and AI agents — same type system, same idioms, same toolchain on both sides.
+- Express is minimal and battle-tested. Its middleware model maps directly to BLADE's security middleware chain (Helmet → CORS → auth → validation → routes).
+- TypeScript strict mode catches an entire class of runtime errors at compile time. This is especially valuable for AI-generated code, which tends to have subtle type errors.
+- Node's async, event-driven execution fits Lambda's model well — no JVM overhead, fast cold starts.
+- Rich ecosystem of security-focused packages: Helmet (headers), express-rate-limit, express-validator, opossum (circuit breakers).
+
+#### Python + FastAPI — *Primary backend*
+
+- Python is the dominant language for ML, data science, and AWS Bedrock. When the backend needs to call a model, do data transformation, or integrate with analytics tooling, Python has no real competitor.
+- FastAPI is async-native, has automatic OpenAPI/Swagger docs, and Pydantic v2 provides the best request validation model in any web framework — schema errors surface at the boundary, not deep in business logic.
+- Better choice than Django or Flask: Django is opinionated and adds significant overhead for simple APIs; Flask has no built-in async support or type validation; FastAPI surpasses both on all three dimensions.
+
+#### Go + Gin — *Approved*
+
+- Go compiles to a small static binary with no runtime overhead — Lambda cold starts are measured in milliseconds, not seconds.
+- `net/http` in the stdlib is production-quality (unlike Node's built-in http module). `log/slog` (stdlib since Go 1.21) provides structured logging with no third-party dependency.
+- Go's concurrency model (goroutines, channels) handles high fan-out patterns (many parallel upstream API calls) more efficiently than async/await.
+- Strong static typing with simple syntax — AI agents tend to write correct, idiomatic Go more reliably than, say, Java.
+- Not Primary because: fewer established Lumen-specific patterns; smaller team familiarity today; less AI tooling maturity than TypeScript/Python.
+
+#### Rust + Axum — *Approved (advanced)*
+
+- Maximum performance and memory safety guarantees. Zero-cost abstractions mean no runtime overhead. Axum is the tokio-ecosystem standard with strong type-safe routing.
+- The borrow checker eliminates entire classes of memory safety bugs that exist in C/C++ and can appear subtly in other languages.
+- Not Primary because: steep learning curve; slower development velocity than Go or Node; smaller talent pool; AI agents are less reliable writing idiomatic Rust (ownership semantics are non-trivial to generate correctly).
+- Use when the team has Rust experience and the use case genuinely demands it.
+
+#### React 19 + Vite — *Primary frontend*
+
+- React is the dominant SPA framework with the largest ecosystem, the best AI tooling support, and the most documentation per component pattern.
+- Vite's development build is dramatically faster than webpack-based alternatives (sub-second HMR vs. 20–30+ second rebuilds on large projects). This matters for developer experience and CI speed.
+- TypeScript strict mode catches type errors at compile time — especially important for the component prop interfaces that AI agents generate.
+- React's component model maps naturally to how AI agents decompose UI: each component is a self-contained unit with clear inputs (props) and outputs (rendered HTML).
+
+#### Next.js — *Approved (SSR/SSG only)*
+
+- Valid when SEO, first-paint performance, or edge rendering are requirements that a pure SPA cannot meet.
+- For Lumen internal tools (authenticated, not indexed by search engines), these requirements rarely apply — React + Vite is almost always the right choice.
+
+---
+
+### Why specific universal requirements exist
+
+#### OIDC over static AWS keys
+Static IAM access keys are long-lived credentials stored as GitHub secrets. If a secret is leaked (repository compromise, log exposure, third-party service breach), the key remains valid until manually rotated. OIDC tokens are ephemeral (15-minute TTL), scoped to specific GitHub repositories and workflows, and require no credentials to store or rotate. The attack surface is fundamentally smaller.
+
+#### SHA-pinned GitHub Actions
+Version tags (e.g., `actions/checkout@v4`) are mutable — a compromised package maintainer can move the tag to point to malicious code. Pinning to a full commit SHA (`@11bd71901bbe5b1630ceea73d27597364c9af683`) makes the referenced code immutable. Supply chain attacks on CI/CD pipelines are a real and growing threat (SolarWinds, XZ Utils, etc.).
+
+#### Structured logging + correlation IDs
+CloudWatch Logs Insights can filter and aggregate structured JSON by field value — `filter correlationId = "abc-123"` returns every log line for a single request across all Lambda invocations. Unstructured `console.log` strings require regex matching against free text. The difference in debuggability in production incidents is significant. Correlation IDs additionally enable distributed tracing across Lambda → external API → DynamoDB without a dedicated tracing service.
+
+#### CRLF stripping
+Log injection: if an attacker controls content that reaches a log line (e.g., a user-supplied search term or name field), they can embed `\r\n` characters to inject fake log entries that appear legitimate. Stripping CR/LF characters from user input before logging closes this attack vector.
+
+#### DOMPurify
+React's JSX escapes `{}` expressions, preventing direct XSS in most cases. But `dangerouslySetInnerHTML`, URL injection via `href`/`src`, and content rendered from external API responses (Bedrock, ServiceNow, etc.) bypass React's escaping. DOMPurify sanitizes HTML strings before they reach the DOM, removing scripts, event handlers, and dangerous attributes. One of the most exploited vulnerability classes in web apps.
+
+#### Circuit breakers
+Without circuit breakers, a slow external API (ServiceNow, LaunchDarkly, Bedrock) causes request pileup: each inbound request holds an open connection waiting for the upstream timeout. Lambda concurrency limits are quickly exhausted, and the app stops responding to all requests — not just those that depend on the slow upstream. Circuit breakers fail fast when a dependency is unhealthy, return a degraded response immediately, and self-heal once the upstream recovers (half-open probe). Circuit breakers do not replace retry logic — they complement it.
+
+#### WAF
+AWS WAF managed rule sets (`AWSManagedRulesCommonRuleSet`, `AWSManagedRulesSQLiRuleSet`, etc.) block known-bad request patterns — SQL injection, XSS, scanner signatures, bad bots — before they reach the application. Disabled by default because not all apps need the added cost; enabled for any public-facing app or app handling sensitive data.
+
+#### Threat model in SECURITY.md
+A threat model is not security theater. Writing down what an attacker would want (steal tokens, exfiltrate data, inject into ServiceNow), what they can reach (ALB, public endpoint, MSAL callback), and how each threat is mitigated forces explicit reasoning about the attack surface. It also creates a baseline that a new engineer (or AI agent) can read to understand *why* specific security controls exist, rather than just knowing that they do.
+
+---
+
+### Why stacks are discouraged
+
+| Stack | Specific reason |
+|-------|----------------|
+| **PHP** | Inconsistent security model (decades of `register_globals`, `magic_quotes`, and other foot-guns); type system is bolted on (PHP 8 improved this but legacy patterns persist across codebases and tutorials); not idiomatic for Lambda/serverless. |
+| **Apache httpd (as app server)** | Replaced by ALB + Lambda for our deployment model. Running Apache as an app server on EC2 adds operational overhead (patching, scaling, SSH access) with no benefit over a managed Lambda + ALB setup. |
+| **AngularJS (1.x)** | End-of-life December 2021. Known XSS vulnerabilities. No migration path within the framework — any effort is better spent on React. |
+| **Angular 2–21** | Heavy CLI with complex build tooling; not Chi-native; diverges from Lumen standard. Angular's change detection model and RxJS dependency chain are harder for AI agents to navigate correctly than React's component model. Acceptable in legacy apps with a migration plan. |
+| **Django / Flask** | Django: opinionated configuration that adds overhead for simple Lambda APIs. Flask: no async support, no type validation, requires significant boilerplate to reach FastAPI's baseline. FastAPI is strictly superior for the use cases where Python is chosen. |
+| **jQuery** | Superseded by React. DOM manipulation patterns common in jQuery code are a major source of XSS vulnerabilities. No type safety. No component model — AI agents generate hard-to-maintain spaghetti with jQuery. |
+| **Express + JavaScript (no TypeScript)** | Without TypeScript, there is no compile-time type checking. Runtime type errors that TypeScript would catch at build time appear in production. The maintenance cost grows as the codebase scales. The migration to TypeScript is small; the benefit is large. |
+| **Spring Boot / Java** | JVM cold starts on Lambda are 3–10+ seconds without SnapStart. Spring Boot's annotation-heavy configuration is verbose and opinionated in ways that create friction for AI agents. Java achieves nothing that Go or Node/Express cannot do better in a serverless context. |
+| **Ruby on Rails** | No established Lumen SRE patterns. No BLADE scaffold. Small talent pool in the SRE org. Rails' "convention over configuration" model conflicts with BLADE's explicit documentation requirement. |
+| **.NET / C#** | Not targeted by BLADE Terraform (which targets Linux Lambda runtimes). Limited Lambda ergonomics compared to Node or Go. Not used in the Lumen SRE portfolio. |

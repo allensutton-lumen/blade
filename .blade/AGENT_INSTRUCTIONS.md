@@ -124,16 +124,18 @@ If it already has content, understand every decision made so far. If it is empty
 ### 2. Conduct the tech stack discussion with the developer
 This is a **real conversation**, not a formality. The following are BLADE recommended defaults with rationale, but every one of them is negotiable. Present the options, understand the app needs, then decide together.
 
-| Area | BLADE default | When to deviate |
-|------|--------------|-----------------|
-| **Frontend** | React 19 + Vite + TypeScript | No frontend if pure API/CLI tool; plain HTML/JS for ultra-simple single-page dashboards with no auth requirement |
-| **Backend** | Node/Express + TypeScript | Python/FastAPI if heavy ML/data science; no backend if static + direct AWS calls |
-| **Auth** | Azure AD MSAL + JWKS | API key only for machine-to-machine; no auth for fully internal tools with network-level protection |
-| **Data storage** | No DB by default — add what fits | DynamoDB for serverless/scalable key-value; SQLite for read-heavy dashboards with periodic ETL (mount on EFS for Lambda persistence); PostgreSQL/RDS for complex relational queries; no DB if data lives entirely in external systems |
-| **Infrastructure** | Lambda + ALB + Terraform | ECS/Fargate for long-running processes; App Runner for simpler container deploys |
-| **WAF** | Optional (disabled by default) | Enable for public-facing apps or apps handling sensitive data |
-| **Cloud provider** | AWS | All BLADE Terraform targets AWS. If Azure or GCP is required, the Terraform modules will need to be adapted — note this as a deviation in TECHNICAL_DECISIONS.md. |
-| **CI/CD** | GitHub Actions + OIDC | Jenkins if org policy requires it |
+See the **Stack-specific implementation guides** section for exact tool choices per stack. Stacks not listed there (PHP, Angular, Django, Spring Boot, etc.) are not approved.
+
+| Area | BLADE default | Tier | When to deviate |
+|------|--------------|------|-----------------|
+| **Backend** | Node/Express + TypeScript | Primary | Python/FastAPI *(Primary)* for ML/data science; Go *(Approved)* for high-throughput or CLI; no backend if static + direct AWS calls |
+| **Frontend** | React 19 + Vite + TypeScript | Primary | Next.js *(Approved)* if SSR/SSG needed; no frontend if pure API/CLI |
+| **Auth** | Azure AD MSAL + JWKS | Primary | API key for machine-to-machine; no auth for fully internal tools with network-level protection |
+| **Data storage** | No DB by default — add what fits | — | DynamoDB for serverless key-value; SQLite on EFS for read-heavy dashboards with periodic ETL; PostgreSQL/RDS for complex relational queries |
+| **Infrastructure** | Lambda + ALB + Terraform | Primary | ECS/Fargate for long-running processes; App Runner for simpler container deploys |
+| **WAF** | Optional (disabled by default) | — | Enable for public-facing apps or apps handling sensitive data |
+| **Cloud provider** | AWS | Primary | All BLADE Terraform targets AWS. Azure/GCP requires Terraform adaptation — document in TECHNICAL_DECISIONS.md. |
+| **CI/CD** | GitHub Actions + OIDC | Primary | Jenkins if org policy requires it |
 
 Questions to ask during the discussion:
 - What does this app actually do? (understand the domain first)
@@ -153,15 +155,164 @@ Every decision made in the discussion goes into `TECHNICAL_DECISIONS.md` — inc
 
 ---
 
+## Stack-specific implementation guides
+
+BLADE requirements have two layers:
+
+- **Layer 1 — Universal** (every app, every stack): structured logging, rate limiting, input validation, auth on all routes, circuit breakers, CRLF stripping, DOMPurify, SHA-pinned CI, OIDC deploy, threat model, secrets manager, etc. The *mechanism* is required; the *tool* is stack-dependent.
+- **Layer 2 — Per-stack** (prescriptive defaults for approved stacks): listed below. If your stack is here, follow these patterns exactly unless you document a deviation in `TECHNICAL_DECISIONS.md`.
+
+---
+
+### Backend: Node.js + Express + TypeScript *(Primary)*
+
+The primary BLADE backend. All existing Lumen SRE Node apps use this pattern.
+
+| Concern | Tool / pattern |
+|---------|---------------|
+| Runtime | Node 22 LTS |
+| Framework | Express 4 + TypeScript strict mode |
+| Logging | `winston` — structured JSON with correlation ID middleware |
+| Input validation | `express-validator` — validate on route, call `handleValidationErrors` |
+| Rate limiting | `express-rate-limit` — `standardLimiter` (reads), `strictLimiter` (writes) |
+| Auth | `middleware/auth.ts` (JWKS) + `middleware/authorize.ts` (claims) |
+| Circuit breakers | `opossum` — wrap ServiceNow, LD, and all third-party HTTP calls |
+| Testing | `vitest` + `supertest`; mock all external calls |
+| Linting | `ESLint` + `@typescript-eslint` ruleset |
+| CRLF strip | `.replace(/[\r\n]/g, ' ')` on user input before logging |
+| Secrets | `utils/secrets.ts` — Secrets Manager SDK with in-process 5-min cache |
+| Security headers | `helmet()` middleware — do not remove; provides CSP, HSTS, Permissions-Policy |
+
+Middleware order (must follow):
+```
+helmet → fail-closed CORS → body parser → correlation ID → structured logger → auth (JWKS) → routes → global error handler
+```
+
+---
+
+### Backend: Python + FastAPI *(Primary)*
+
+Used when the backend involves ML/data science, heavy data transformation, or AWS Bedrock.
+
+| Concern | Tool / pattern |
+|---------|---------------|
+| Runtime | Python 3.12+ |
+| Framework | FastAPI (latest stable) |
+| Logging | `structlog` or `logging` with JSON formatter + correlation ID middleware |
+| Input validation | Pydantic v2 models on all request bodies (not Pydantic v1) |
+| Rate limiting | `slowapi` — apply `@limiter.limit()` decorator per route |
+| Auth | PyJWT + JWKS endpoint — validate on every `/api/*` route |
+| Circuit breakers | Custom `AsyncCircuitBreaker` for AWS SDK calls (see wave_path_comp pattern); `pybreaker` for sync HTTP third-party calls |
+| Testing | `pytest` + `httpx.AsyncClient`; mock externals with `unittest.mock` |
+| Linting | `ruff check` + `ruff format` (replaces flake8/pylint/isort entirely) |
+| CRLF strip | `.replace('\r', '').replace('\n', ' ')` on user input before logging |
+| Secrets | `boto3` Secrets Manager client with in-process caching (TTL ≤5 min) |
+| Security headers | Custom `SecurityHeadersMiddleware(BaseHTTPMiddleware)` — set CSP, HSTS, X-Frame-Options, Permissions-Policy |
+
+---
+
+### Backend: Go + net/http or Gin *(Approved)*
+
+Preferred for high-throughput services, CLI tools, or sidecars where low memory footprint and fast startup matter. Also a strong choice when the team is comfortable with Go.
+
+| Concern | Tool / pattern |
+|---------|---------------|
+| Runtime | Go 1.22+ |
+| Framework | `net/http` stdlib for simple APIs; `gin-gonic/gin` for larger REST APIs |
+| Logging | `log/slog` (stdlib, Go 1.21+) — JSON handler; attach correlation ID via context |
+| Input validation | `go-playground/validator` |
+| Rate limiting | `golang.org/x/time/rate` (token bucket) |
+| Auth | `golang-jwt/jwt` + JWKS caching |
+| Circuit breakers | `sony/gobreaker` |
+| Testing | stdlib `testing` + `testify/assert`; `net/http/httptest` for handler tests |
+| Linting | `golangci-lint` — include `staticcheck`, `errcheck`, `govet`; run in CI |
+| CRLF strip | `strings.NewReplacer("\r", "", "\n", " ")` on user input before logging |
+| Secrets | AWS SDK v2 `secretsmanager` client with in-process cache |
+| Security headers | Custom middleware matching Helmet output (CSP, HSTS, X-Frame-Options, Permissions-Policy) |
+| HTML sanitization | `microcosm-cc/bluemonday` for any server-side HTML sanitization |
+
+---
+
+### Backend: Rust + Axum *(Approved — advanced)*
+
+Maximum performance or memory-constrained environments. Only use if the team has Rust experience — capability is high but the learning curve is steep.
+
+| Concern | Tool / pattern |
+|---------|---------------|
+| Runtime | Rust stable (latest) |
+| Framework | `axum` (tokio async runtime) |
+| Logging | `tracing` + `tracing-subscriber` JSON format |
+| Input validation | `validator` crate + `serde` |
+| Rate limiting | `tower-governor` (Tower middleware) |
+| Auth | `jsonwebtoken` crate + JWKS caching |
+| Circuit breakers | `failsafe-rs` or implement with tokio channels |
+| Testing | `#[tokio::test]` + `tower::ServiceExt` for handler tests |
+| Linting | `clippy` — treat warnings as errors in CI (`RUSTFLAGS="-D warnings"`) |
+| Secrets | AWS SDK for Rust `secretsmanager` client |
+
+---
+
+### Frontend: React 19 + TypeScript + Vite *(Primary)*
+
+| Concern | Tool / pattern |
+|---------|---------------|
+| Runtime | Node 22 LTS (build only) |
+| Framework | React 19 + Vite + TypeScript strict mode |
+| Design system | Chi 7.13.0 — `https://lib.lumen.com/chi/7.13.0/chi.css`; add `class="chi"` to `<html>`; use Web Components (`<chi-button>`, `<chi-modal>`, etc.) — not legacy CSS classes |
+| Auth | `@azure/msal-browser` — redirect flow; all routes except MSAL callback require valid session |
+| XSS sanitization | `DOMPurify` — sanitize any HTML from external sources before rendering; do not rely on React's default escaping alone for third-party content |
+| Testing | `vitest` + `@testing-library/react` for unit/component; `playwright` for E2E |
+| Linting | `ESLint` + `@typescript-eslint` + `eslint-plugin-react-hooks` |
+| State management | React context + hooks for simple state; `zustand` for complex cross-component state |
+| HTTP client | `axios` or native `fetch` — centralize in a typed API client module |
+| Bundle size | Audit with `vite-bundle-visualizer`; bundles >500 KB use `React.lazy` + `Suspense` |
+
+---
+
+### Frontend: Next.js 14+ *(Approved — SSR/SSG only)*
+
+Use when server-side rendering is needed for SEO, first-paint performance, or edge rendering. For pure SPAs with an API backend, prefer React + Vite.
+
+| Concern | Tool / pattern |
+|---------|---------------|
+| Framework | Next.js 14+ App Router |
+| Auth | `next-auth` with Azure AD provider; or `@azure/msal-browser` client-side only |
+| Testing | Same as React above |
+| Linting | Same as React above |
+| Deployment | Lambda@Edge or Vercel — document in TECHNICAL_DECISIONS.md |
+
+---
+
+### Stacks to avoid
+
+The following are actively discouraged for new Lumen SRE apps. If a legacy app uses them, document a migration plan in `TECHNICAL_DECISIONS.md`.
+
+| Stack | Why to avoid | Preferred alternative |
+|-------|-------------|----------------------|
+| PHP | Inconsistent security model, no type safety, fragmented ecosystem | Python/FastAPI or Node/Express |
+| Apache httpd (as app server) | Superseded by ALB + Lambda/ECS; unnecessary config complexity | AWS ALB + Lambda |
+| AngularJS (1.x) | End of life 2021; known XSS vulnerabilities | React 19 |
+| Angular 2–21 | Heavy CLI; diverges from Lumen standard; not Chi-native | React 19 (migration plan acceptable for existing apps) |
+| Django / Flask | More boilerplate than FastAPI; not async-native | FastAPI |
+| jQuery | Superseded by React; no type safety; DOM manipulation XSS risk | React 19 |
+| Express + JavaScript (no TS) | No compile-time safety; harder to maintain at scale | Express + TypeScript |
+| Spring Boot / Java | Heavy JVM startup on Lambda; verbose; not idiomatic for serverless | Go or Node/Express |
+| Ruby on Rails | No BLADE patterns; not used in Lumen SRE | Node/Express or Python/FastAPI |
+| .NET / C# | Not targeted by BLADE Terraform; limited Lambda ergonomics | Go or Node/Express |
+
+---
+
 ## During development
 
-- Always use `backend/src/utils/logger.ts` — never `console.log` in backend production code.
-- Reuse middleware patterns in `backend/src/middleware/` — do not reinvent auth, logging, or rate limiting.
-- Every new service must have unit tests with all external calls mocked.
-- Every POST/PUT endpoint must use `express-validator` + `handleValidationErrors`.
-- Run `npm run lint && npm test` in both `frontend/` and `backend/` before every commit.
-- Run `npx tsc --noEmit` in both `frontend/` and `backend/` before merging.
-- Clean up dead code: no commented-out blocks, no unused imports, no unexplained `any`.
+These rules apply regardless of stack. For exact tool names and commands, see the **Stack-specific implementation guides** section above.
+
+- **Never use ad-hoc logging** (`console.log`, `print()`, `fmt.Println`) in backend production code — use the structured logger for your stack.
+- **Reuse middleware patterns** — do not reinvent auth, logging, rate limiting, or correlation ID injection.
+- **Every new service/handler must have unit tests** with all external calls mocked.
+- **Every POST/PUT endpoint must validate the request body** using the stack's schema validation tool. Invalid payloads return HTTP 422 with a structured error — never raw stack traces.
+- **Run lint and tests before every commit** — command varies by stack (see per-stack guide).
+- **Run the type checker before merging**: TypeScript → `npx tsc --noEmit`; Python → `mypy` or Pyright; Go → `go build ./...`.
+- **Clean up dead code** in every PR: no commented-out blocks, no unused imports, no unexplained untyped values (`any`, `interface{}`, untyped `dict`).
 
 ### Post-deploy verification
 
@@ -218,15 +369,14 @@ If a change affects multiple docs, update all of them. Partial doc updates are w
 
 ## Lumen-specific patterns
 
-- **Azure AD auth:** use `middleware/auth.ts` + `middleware/authorize.ts` — do not roll your own JWKS validation.
-- **Secrets:** use AWS Secrets Manager via `utils/secrets.ts` — no hardcoded credentials.
+These are Lumen/org-specific requirements that apply on top of BLADE universal requirements and the per-stack guides. They do not change with the stack.
+
+- **Auth:** Azure AD with MSAL — do not roll your own JWKS validation. See per-stack guide for the specific library and middleware pattern.
+- **Secrets path convention:** `ld-sre-<app-name>/<env>/<secret-name>` in AWS Secrets Manager.
 - **Domain naming:** `<app-name>.<env>.ld.lumen.com`
-- **AWS accounts:** dev=`396304931560`, prod=`111491017663` (document in `.env.example` but confirm with team — may vary).
+- **AWS accounts:** dev=`396304931560`, prod=`111491017663` (document in `.env.example` — confirm with team as accounts may vary by project).
 - **Branding:** Chi design system v7.13.0 from `https://lib.lumen.com/chi/7.13.0/chi.css`. Add `class="chi"` to the `<html>` element. Use Chi **Web Components** (`<chi-button>`, `<chi-alert>`, `<chi-modal>`, etc.) — not legacy CSS classes. Chi Web Components handle accessibility automatically.
-- **Security headers:** Helmet is already configured — do not remove it. It provides CSP, `Permissions-Policy`, HSTS, and other headers automatically.
-- **Rate limiting:** `standardLimiter` and `strictLimiter` are already wired — apply `strictLimiter` to any write endpoints.
-- **Python linting:** use **Ruff** (`ruff check`) when the backend is Python — it is faster and more comprehensive than flake8/pylint and is the standard in Lumen Python apps.
-- **Production deploys:** Lumen requires a **GCR (Global Change Request)** for all production deployments. Before deploying to prod, ensure a GCR is opened, approved, and in an active change window. Do not deploy to production without a GCR — this is a compliance requirement, not a suggestion.
+- **Production deploys:** Lumen requires a **GCR (Global Change Request)** for all production deployments. Before deploying to prod, ensure a GCR is opened, approved, and in an active change window. This is a compliance requirement, not a suggestion.
 
 ---
 
