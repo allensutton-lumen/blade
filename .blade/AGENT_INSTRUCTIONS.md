@@ -316,6 +316,11 @@ These rules apply regardless of stack. For exact tool names and commands, see th
 - **Every POST/PUT endpoint must validate the request body** using the stack's schema validation tool. Invalid payloads return HTTP 422 with a structured error — never raw stack traces.
 - **Run lint and tests before every commit** — command varies by stack (see per-stack guide).
 - **Run the type checker before merging**: TypeScript → `npx tsc --noEmit`; Python → `mypy` or Pyright; Go → `go build ./...`.
+- **Fix all build warnings before committing** — warnings are not informational, they are deferred bugs. A build that produces warnings is not a clean build. Zero-warning policy: if a warning cannot be fixed immediately, it must be suppressed with an explicit inline comment explaining why, not ignored silently.
+- **Run `npm audit` after every dependency change** (install, upgrade, or removal) and fix all high/critical findings before committing. For moderate findings, fix them in the same PR if the fix is non-breaking; open a `fix/security-deps` branch immediately if it requires more investigation. Never leave a known high/critical vulnerability in a merged branch.
+  - Node: `npm audit --audit-level=moderate` to see all; `npm audit fix` for automatic fixes; `npm audit fix --force` only when you have reviewed the breaking changes.
+  - Python: `pip-audit` after any `requirements.txt` change; fix or pin with documented justification.
+  - Go: `govulncheck ./...` after any `go.mod` change.
 - **Clean up dead code** in every PR: no commented-out blocks, no unused imports, no unexplained untyped values (`any`, `interface{}`, untyped `dict`).
 
 ### Post-deploy verification
@@ -365,6 +370,8 @@ If a change affects multiple docs, update all of them. Partial doc updates are w
 - Use `console.log` in backend production code — use the structured logger.
 - Skip input validation on any POST/PUT endpoint.
 - Commit with failing lint or tests.
+- Commit with build warnings — fix them or suppress with an explicit inline explanation.
+- Commit after a dependency change without running `npm audit` / `pip-audit` / `govulncheck` and resolving high/critical findings.
 - Touch real external systems in automated tests — mock everything external.
 - Send real notifications, create real tickets, or trigger real alerts in tests.
 - Commit sensitive data (credentials, tokens, PII) — use `.env` files and Secrets Manager.
