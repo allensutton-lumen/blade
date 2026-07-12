@@ -178,7 +178,7 @@ The primary BLADE backend. All existing Lumen SRE Node apps use this pattern.
 | Framework | Express 4 + TypeScript strict mode |
 | Logging | `winston` — structured JSON with correlation ID middleware |
 | Input validation | `express-validator` — validate on route, call `handleValidationErrors` |
-| Rate limiting | `express-rate-limit` — `standardLimiter` (reads), `strictLimiter` (writes) |
+| Rate limiting | `express-rate-limit` — `standardLimiter` (reads), `strictLimiter` (writes) — **scope to `/api/*` only**, not `app.use(rateLimiter)`; static files (JS/CSS/HTML) consume the per-IP budget on every page load if applied globally |
 | Auth | `middleware/auth.ts` (JWKS) + `middleware/authorize.ts` (claims) |
 | Circuit breakers | `opossum` — wrap ServiceNow, LD, and all third-party HTTP calls |
 | Testing | `vitest` + `supertest`; mock all external calls |
@@ -204,14 +204,47 @@ Used when the backend involves ML/data science, heavy data transformation, or AW
 | Framework | FastAPI (latest stable) |
 | Logging | `structlog` or `logging` with JSON formatter + correlation ID middleware |
 | Input validation | Pydantic v2 models on all request bodies (not Pydantic v1) |
-| Rate limiting | `slowapi` — apply `@limiter.limit()` decorator per route |
-| Auth | PyJWT + JWKS endpoint — validate on every `/api/*` route |
+| Rate limiting | `slowapi` — apply `@limiter.limit()` decorator per route; **never use `SlowAPIMiddleware` as a blanket global rate limit** — it will apply to health checks, docs, and static mounts; always scope limiters to `/api/` route prefixes |
+| Auth | PyJWT + JWKS endpoint — validate on every `/api/*` route; see **JWKS validation pattern** below |
 | Circuit breakers | Custom `AsyncCircuitBreaker` for AWS SDK calls (see wave_path_comp pattern); `pybreaker` for sync HTTP third-party calls |
 | Testing | `pytest` + `httpx.AsyncClient`; mock externals with `unittest.mock` |
 | Linting | `ruff check` + `ruff format` (replaces flake8/pylint/isort entirely) |
 | CRLF strip | `.replace('\r', '').replace('\n', ' ')` on user input before logging |
 | Secrets | `boto3` Secrets Manager client with in-process caching (TTL ≤5 min) |
 | Security headers | Custom `SecurityHeadersMiddleware(BaseHTTPMiddleware)` — set CSP, HSTS, X-Frame-Options, Permissions-Policy |
+
+#### JWKS validation pattern (Python) — required
+
+**Use a module-level `PyJWKClient` instance, never a per-request one.** Creating a new client per request re-fetches the JWKS endpoint on every API call — latency spike plus a hard failure if the Microsoft endpoint is briefly unreachable.
+
+```python
+from jwt import PyJWKClient, decode, ExpiredSignatureError, InvalidTokenError
+from fastapi import HTTPException
+
+# Module-level — created once, caches keys automatically
+_jwks_client = PyJWKClient(settings.JWKS_URI)
+
+def validate_token(token: str) -> dict:
+    try:
+        signing_key = _jwks_client.get_signing_key_from_jwt(token)
+        return decode(
+            token,
+            signing_key.key,
+            algorithms=["RS256"],
+            audience=settings.AZURE_CLIENT_ID,  # REQUIRED — omitting allows tokens for other apps
+        )
+    except ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    # Do NOT catch Exception broadly — let unexpected errors surface as 500
+```
+
+**Python auth rules:**
+- Always validate `aud` (audience) — omitting it allows tokens issued for any Azure AD application to pass.
+- Always validate `iss` (issuer) — check it matches your tenant's issuer URL.
+- Never catch all exceptions with a bare `except Exception` in auth middleware — swallowing unexpected errors masks misconfiguration.
+- Never log the raw JWT string — it contains the user's identity claims.
 
 ---
 
@@ -225,8 +258,8 @@ Preferred for high-throughput services, CLI tools, or sidecars where low memory 
 | Framework | `net/http` stdlib for simple APIs; `gin-gonic/gin` for larger REST APIs |
 | Logging | `log/slog` (stdlib, Go 1.21+) — JSON handler; attach correlation ID via context |
 | Input validation | `go-playground/validator` |
-| Rate limiting | `golang.org/x/time/rate` (token bucket) |
-| Auth | `golang-jwt/jwt` + JWKS caching |
+| Rate limiting | `golang.org/x/time/rate` (token bucket) — **scope to API route group only** (e.g., `apiRouter.Use(rateLimitMiddleware)`); do not attach to the root mux or static file handler |
+| Auth | `golang-jwt/jwt` + JWKS caching — see **JWKS validation pattern** below |
 | Circuit breakers | `sony/gobreaker` |
 | Testing | stdlib `testing` + `testify/assert`; `net/http/httptest` for handler tests |
 | Linting | `golangci-lint` — include `staticcheck`, `errcheck`, `govet`; run in CI |
@@ -234,6 +267,44 @@ Preferred for high-throughput services, CLI tools, or sidecars where low memory 
 | Secrets | AWS SDK v2 `secretsmanager` client with in-process cache |
 | Security headers | Custom middleware matching Helmet output (CSP, HSTS, X-Frame-Options, Permissions-Policy) |
 | HTML sanitization | `microcosm-cc/bluemonday` for any server-side HTML sanitization |
+
+#### JWKS validation pattern (Go) — required
+
+**Cache JWKS keys at the package level with a TTL.** Fetching the JWKS endpoint per-request is a latency and reliability problem.
+
+```go
+import (
+    "github.com/MicahParks/keyfunc/v3"
+    "github.com/golang-jwt/jwt/v5"
+)
+
+// Package-level — initialized once at startup, auto-refreshes keys
+var jwks *keyfunc.JWKS
+
+func InitJWKS(jwksURL string) error {
+    var err error
+    jwks, err = keyfunc.NewDefault([]string{jwksURL}) // auto-refreshes on key rotation
+    return err
+}
+
+func ValidateToken(tokenString string) (jwt.MapClaims, error) {
+    token, err := jwt.Parse(tokenString, jwks.Keyfunc,
+        jwt.WithAudience(cfg.AzureClientID),  // REQUIRED
+        jwt.WithIssuer(cfg.AzureIssuer),       // REQUIRED
+        jwt.WithExpirationRequired(),
+    )
+    if err != nil || !token.Valid {
+        return nil, err
+    }
+    return token.Claims.(jwt.MapClaims), nil
+}
+```
+
+**Go auth rules:**
+- Always pass `jwt.WithAudience` and `jwt.WithIssuer` — `golang-jwt` does not validate these by default.
+- Use `keyfunc` (or equivalent) for automatic key rotation handling — do not build your own JWKS HTTP fetch.
+- Return `401` on any token error; never fall through to a `500` or an unauthenticated handler.
+- Never log the raw token string.
 
 ---
 
@@ -247,12 +318,49 @@ Maximum performance or memory-constrained environments. Only use if the team has
 | Framework | `axum` (tokio async runtime) |
 | Logging | `tracing` + `tracing-subscriber` JSON format |
 | Input validation | `validator` crate + `serde` |
-| Rate limiting | `tower-governor` (Tower middleware) |
-| Auth | `jsonwebtoken` crate + JWKS caching |
+| Rate limiting | `tower-governor` (Tower middleware) — **apply as a layer on the API router**, not the root `Router`; Axum serves health and static routes from the same app, so a root-level rate limit hits them too |
+| Auth | `jsonwebtoken` crate + JWKS caching — see **JWKS validation pattern** below |
 | Circuit breakers | `failsafe-rs` or implement with tokio channels |
 | Testing | `#[tokio::test]` + `tower::ServiceExt` for handler tests |
 | Linting | `clippy` — treat warnings as errors in CI (`RUSTFLAGS="-D warnings"`) |
 | Secrets | AWS SDK for Rust `secretsmanager` client |
+
+#### JWKS validation pattern (Rust) — required
+
+**Use a shared, lazily-initialized JWKS client with key caching.** The `jsonwebtoken` crate validates signatures but does not fetch or cache JWKS — you must manage that separately.
+
+```rust
+use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+use tokio::sync::OnceCell;
+
+static JWKS: OnceCell<JwkSet> = OnceCell::const_new();
+
+async fn get_jwks(jwks_uri: &str) -> &'static JwkSet {
+    JWKS.get_or_init(|| async {
+        reqwest::get(jwks_uri).await.unwrap()
+            .json::<JwkSet>().await.unwrap()
+    }).await
+    // Production: add TTL refresh — keys rotate; a stale cache rejects valid tokens
+}
+
+fn validate_token(token: &str, jwks: &JwkSet, audience: &str) -> Result<Claims, Error> {
+    let header = jsonwebtoken::decode_header(token)?;
+    let kid = header.kid.ok_or(Error::MissingKid)?;
+    let jwk = jwks.find(&kid).ok_or(Error::UnknownKid)?;
+    let key = DecodingKey::from_jwk(jwk)?;
+
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_audience(&[audience]); // REQUIRED
+    validation.set_issuer(&[expected_issuer]); // REQUIRED
+
+    Ok(decode::<Claims>(token, &key, &validation)?.claims)
+}
+```
+
+**Rust auth rules:**
+- Always set `validation.set_audience` and `validation.set_issuer` — `jsonwebtoken` skips these checks if not configured.
+- Add a TTL or background refresh to the JWKS cache — Azure AD rotates keys periodically; a permanently cached key set will reject valid tokens after rotation.
+- Return `StatusCode::UNAUTHORIZED` (401) from the auth extractor; never panic or return 500 on a bad token.
 
 ---
 
@@ -263,13 +371,52 @@ Maximum performance or memory-constrained environments. Only use if the team has
 | Runtime | Node 22 LTS (build only) |
 | Framework | React 19 + Vite + TypeScript strict mode |
 | Design system | Chi 7.13.0 — `https://lib.lumen.com/chi/7.13.0/chi.css`; add `class="chi"` to `<html>`; use Web Components (`<chi-button>`, `<chi-modal>`, etc.) — not legacy CSS classes |
-| Auth | `@azure/msal-browser` — redirect flow; all routes except MSAL callback require valid session |
+| Auth | `@azure/msal-browser` v3+ — redirect flow; all routes except MSAL callback require valid session; see **MSAL bootstrap pattern** below |
 | XSS sanitization | `DOMPurify` — sanitize any HTML from external sources before rendering; do not rely on React's default escaping alone for third-party content |
 | Testing | `vitest` + `@testing-library/react` for unit/component; `playwright` for E2E |
 | Linting | `ESLint` + `@typescript-eslint` + `eslint-plugin-react-hooks` |
 | State management | React context + hooks for simple state; `zustand` for complex cross-component state |
 | HTTP client | `axios` or native `fetch` — centralize in a typed API client module |
 | Bundle size | Audit with `vite-bundle-visualizer`; bundles >500 KB use `React.lazy` + `Suspense` |
+
+#### MSAL bootstrap pattern (`main.tsx`) — required, do not deviate
+
+`@azure/msal-browser` v3+ requires an explicit two-step initialization. Skipping either step causes an infinite redirect loop in production.
+
+```tsx
+const msalInstance = new PublicClientApplication(msalConfig);
+
+async function bootstrap() {
+  await msalInstance.initialize();
+
+  // REQUIRED: initialize() alone does NOT process the #code= redirect hash in v3+.
+  // handleRedirectPromise() must be called explicitly or tokens are never stored.
+  const redirectResponse = await msalInstance.handleRedirectPromise().catch((err) => {
+    console.error('[MSAL] handleRedirectPromise failed:', err);
+    return null;
+  });
+
+  if (redirectResponse?.account) {
+    msalInstance.setActiveAccount(redirectResponse.account);
+  }
+  const accounts = msalInstance.getAllAccounts();
+  if (!msalInstance.getActiveAccount() && accounts.length > 0) {
+    msalInstance.setActiveAccount(accounts[0]);
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <MsalProvider instance={msalInstance}><App /></MsalProvider>
+  );
+}
+
+bootstrap().catch((err) => { /* show error UI — do NOT reload */ });
+```
+
+**MSAL rules — violations cause redirect loops or broken auth:**
+
+- **Never auto-redirect on mount.** A `LoginPage`/`AuthOverlay` component must only call `loginRedirect` when the user clicks a button — never in a `useEffect`. Auto-redirecting on mount creates an infinite loop when token exchange fails.
+- **Never use `acquireTokenRedirect` as a silent fallback.** If `acquireTokenSilent` fails, try `acquireTokenPopup`. If that also fails, return `null` and show an error banner — do not fall through to `acquireTokenRedirect`. A full-page redirect on every failed API call creates a reload loop when the popup is blocked.
+- **No CSP `connect-src` meta tag.** MSAL fetches from Microsoft endpoints that are difficult to fully enumerate. Apply CSP at the server/ALB level after verifying all required origins, or omit `connect-src` for internal tools. A restrictive `<meta>` CSP tag will silently break MSAL token exchange.
 
 ---
 
@@ -280,10 +427,20 @@ Use when server-side rendering is needed for SEO, first-paint performance, or ed
 | Concern | Tool / pattern |
 |---------|---------------|
 | Framework | Next.js 14+ App Router |
-| Auth | `next-auth` with Azure AD provider; or `@azure/msal-browser` client-side only |
+| Auth | `next-auth` with Azure AD provider (preferred for SSR); or `@azure/msal-browser` client-side only — see **next-auth Azure AD rules** below |
 | Testing | Same as React above |
 | Linting | Same as React above |
 | Deployment | Lambda@Edge or Vercel — document in TECHNICAL_DECISIONS.md |
+
+#### next-auth Azure AD rules
+
+**next-auth with Azure AD has several non-obvious failure modes:**
+
+- **`NEXTAUTH_URL` must exactly match a redirect URI registered in Azure AD.** A mismatch causes a silent auth failure with no useful error message. In dev: `http://localhost:3000/api/auth/callback/azure-ad`. In prod: `https://<your-domain>/api/auth/callback/azure-ad`. Register both.
+- **Never use `useSession` in Server Components** — it only works in Client Components. In App Router Server Components, use `getServerSession(authOptions)`. Mixing them causes hydration errors that are difficult to diagnose.
+- **Protect routes in `middleware.ts`, not in individual page components.** A component-level redirect is a flash of unauthenticated content; middleware blocks the request before the page renders.
+- **If using `@azure/msal-browser` client-side alongside next-auth server-side, apply the same MSAL bootstrap rules** (see React MSAL section above) — the redirect loop risk is identical.
+- **Do not store the Azure AD access token in `localStorage` or a client-readable cookie** — use `next-auth`'s encrypted JWT session or a server-side session. `next-auth` handles this correctly by default; do not override `session.strategy` to `"database"` without understanding the implications.
 
 ---
 
